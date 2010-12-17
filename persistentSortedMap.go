@@ -12,8 +12,6 @@ type treeNode interface {
 	right() treeNode
 	addLeft(treeNode) treeNode
 	addRight(treeNode) treeNode
-	removeLeft(treeNode) treeNode
-	removeRight(treeNode) treeNode
 	black() bool
 	red() bool
 	blacken() treeNode
@@ -33,8 +31,6 @@ func (n *leafNode) left() treeNode { return nil }
 func (n *leafNode) right() treeNode { return nil }
 func (n *leafNode) addLeft(treeNode) treeNode { panic("Unexpected method call.") }
 func (n *leafNode) addRight(treeNode) treeNode { panic("Unexpected method call.") }
-func (n *leafNode) removeLeft(treeNode) treeNode { panic("Unexpected method call.") }
-func (n *leafNode) removeRight(treeNode) treeNode { panic("Unexpected method call.") }
 func (n *leafNode) black() bool { panic("Unexpected method call.") }
 func (n *leafNode) red() bool { panic("Unexpected method call.") }
 func (n *leafNode) blacken() treeNode { panic("Unexpected method call.") }
@@ -90,8 +86,6 @@ func newRedLeaf(key string, val Value) *redLeaf {
 }
 func (n *redLeaf) addLeft(ins treeNode) treeNode { return red(n.key(), n.val(), ins, n.right()) }
 func (n *redLeaf) addRight(ins treeNode) treeNode { return red(n.key(), n.val(), n.left(), ins) }
-func (n *redLeaf) removeLeft(del treeNode) treeNode { return red(n.key(), n.val(), del, n.right()) }
-func (n *redLeaf) removeRight(del treeNode) treeNode { return red(n.key(), n.val(), n.left(), del) }
 func (n *redLeaf) black() bool { return false }
 func (n *redLeaf) red() bool { return true }
 func (n *redLeaf) blacken() treeNode { return newBlackLeaf(n.key(), n.val()) }
@@ -143,11 +137,12 @@ type persistentSortedMap struct {
 	count int
 }
 
-func NewSortedMap(tree treeNode, count int) IPersistentMap {
-	m := new(persistentSortedMap)
-	m.tree = tree
-	m.count = count
-	return m
+func newSortedMap(tree treeNode, count int) IPersistentMap {
+	return &persistentSortedMap{tree, count}
+}
+
+func NewSortedMap() IPersistentMap {
+	return newSortedMap(nil, 0)
 }
 
 func (m *persistentSortedMap) min() treeNode {
@@ -185,9 +180,9 @@ func (m *persistentSortedMap) Assoc(key string, val Value) IPersistentMap {
 		if found.val() == val {
 			return m
 		}
-		return NewSortedMap(m.replace(m.tree, key, val), m.count)
+		return newSortedMap(m.replace(m.tree, key, val), m.count)
 	}
-	return NewSortedMap(m.tree.blacken(), m.count + 1)
+	return newSortedMap(t.blacken(), m.count + 1)
 }
 
 func (m *persistentSortedMap) Without(key string) IPersistentMap {
@@ -197,9 +192,9 @@ func (m *persistentSortedMap) Without(key string) IPersistentMap {
 			return m
 		}
 		// empty
-		return NewSortedMap(nil, 0)
+		return newSortedMap(nil, 0)
 	}
-	return NewSortedMap(m.tree.blacken(), m.count - 1)
+	return newSortedMap(t.blacken(), m.count - 1)
 }
 
 func (m *persistentSortedMap) Contains(key string) bool {
