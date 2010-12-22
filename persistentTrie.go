@@ -70,6 +70,11 @@ func splitKey(key string, crit int) (string, byte, string) {
 	return key[0:crit], key[crit], key[crit+1:]
 }
 
+type itrie interface {
+	IPersistentMap
+	inorder(string, chan Item)
+}
+
 type trie struct {}
 func (t *trie) Assoc(string, Value) IPersistentMap { panic("Abstract Base") }
 func (t *trie) Without(string) IPersistentMap { panic("Abstract Base") }
@@ -606,7 +611,26 @@ func (l *linearNode) Count() int {
 }
 
 func (e *emptyNode) inorder(prefix string, ch chan Item) {
-	close(ch)
+	if len(prefix) == 0 { close(ch) }
+}
+
+func (l *leaf) inorder(prefix string, ch chan Item) {
+	ch <- Item{prefix + l.key, l.val}
+	if len(prefix) == 0 { close(ch) }
+}
+
+func (n *rangeNode) inorder(prefix string, ch chan Item) {
+	prefix += n.key
+	if n.full {
+		ch <- Item{prefix, n.val}
+	}
+	for i, b := range n.children {
+		if b != nil {
+			prefix += string(n.start+byte(i))
+			b.(itrie).inorder(prefix, ch)
+		}
+	}
+	if len(prefix) == 0 { close(ch) }
 }
 
 func (t *trie) Iter() chan Item {
