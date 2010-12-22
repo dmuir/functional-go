@@ -1,6 +1,11 @@
 package persistentMap
 
+import (
+	"fmt"
+)
+
 const maxLinear = 8
+const minRangeSize = 4
 const maxRangeWaste = 4
 
 func str(s string) string {
@@ -13,16 +18,17 @@ func str(s string) string {
 }
 
 func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
+	if x < 0 { return -x }
 	return x
 }
 
 func min(a, b int) int {
-	if a < b {
-		return a
-	}
+	if a < b { return a }
+	return b
+}
+
+func max(a, b int) int {
+	if a > b { return a }
 	return b
 }
 
@@ -33,7 +39,7 @@ func expanse(first byte, rest ... byte) (byte, byte) {
 		if v < low { low = v }
 		if v > high { high = v }
 	}
-	return high - low, low
+	return high - low + 1, low
 }
 
 /*
@@ -75,8 +81,13 @@ func (t *trie) inorder(string, chan Item) { panic("Abstract Base") }
 type emptyNode struct {
 	trie
 }
-func empty() IPersistentMap {
-	return &emptyNode{trie{}}
+var empty *emptyNode = &emptyNode{trie{}}
+func makeChildren(size int) []IPersistentMap {
+	c := make([]IPersistentMap, size)
+	for i := 0; i < len(c); i++ {
+		c[i] = empty
+	}
+	return c
 }
 
 type leaf struct {
@@ -99,6 +110,21 @@ type linearNode struct {
 func critbytes(first byte, rest ... byte) string {
 	return string(first) + string(rest)
 }
+func (l *linearNode) grow(size int, i int, ch byte) *linearNode {
+	n := new(linearNode)
+	*n = *l
+	n.children = make([]IPersistentMap, size)
+	crit := make([]byte, size)
+	copy(n.children, l.children)
+	copy(crit, l.crit)
+	crit[i] = ch
+	n.crit = string(crit)
+	for i := len(l.children); i < size; i++ {
+		n.children[i] = empty
+	}
+	return n
+}
+	
 func addchild(first IPersistentMap, rest ... IPersistentMap) []IPersistentMap {
 	children := make([]IPersistentMap, len(rest)+1)
 	children[0] = first
@@ -121,10 +147,18 @@ type rangeNode struct {
 }
 func makeRange(key string, val Value, full bool, start byte, occupied byte,
 	children []IPersistentMap) IPersistentMap {
+	count := 0
+	for _, child := range children {
+		if child != nil { count++ }
+	}
+	if count > int(occupied) {
+		fmt.Printf("count: %d, occupied: %d\n", count, occupied)
+		panic("Count > Occupied")
+	}
 	return &rangeNode{trie{}, str(key), val, full, start, occupied, children}
 }
 func fillSpan(start byte, size byte, crits string, children []IPersistentMap) []IPersistentMap {
-	span := make([]IPersistentMap, int(size))
+	span := makeChildren(int(size))
 	for i := 0; i < len(children); i++ {
 		span[crits[i] - start] = children[i]
 	}
@@ -157,6 +191,7 @@ func countbits(bits uint64) byte {
 }
 func (b *bitmapNode) grow(num int) *bitmapNode {
 	n := new(bitmapNode)
+	*n = *b
 	n.children = make([]IPersistentMap, num)
 	copy(n.children, b.children)
 	return n
@@ -316,31 +351,27 @@ func (n *linearNode) Assoc(key string, val Value) IPersistentMap {
 		return linear(prefix, nil, false, critbytes(ch, _ch), makeLeaf(rest, val),
 			linear(_rest, n.val, n.full, n.crit, n.children...))
 	}
-	i := linearFind(ch, n.crit[:], n.children)
-	if i >= maxLinear {
-		// We need a bigger node.  Either a range or a bitmap
-		span, start := expanse(ch, []byte(n.crit)...)
-		if int(span) > (i+maxRangeWaste) {
+	i := linearFind(ch, n.crit, n.children)
+	if i >= len(n.children) {
+		// Determine whether we're a linear, range, or a bitmap
+		if i > minRangeSize {
+			span, start := expanse(ch, []byte(n.crit)...)
+			if int(span) <= (i+maxRangeWaste) {
+				// Prefer a range, even if we're small enough to stay linear
+				children := fillSpan(start, span, n.crit, n.children)
+				children[ch-start] = makeLeaf(rest, val)
+				return makeRange(n.key, n.val, n.full, start, byte(i+1), children)
+			}
+		} else if i > maxLinear {
 			// Prefer a bitmap
 			return bitmapFromLinear(n, ch, rest, val)
-		} else {
-			// Prefer a range
-			children := fillSpan(start, span, n.crit, n.children)
-			children[ch-start] = makeLeaf(rest, val)
-			return makeRange(n.key, n.val, n.full, start, byte(i), children)
 		}
 	}
 		
 	// We still fit in a linear node
-	var child IPersistentMap = nil
-	if i > len(n.children) {
-		// crit byte not in current node
-		child = makeLeaf(rest, val)
-	} else {
-		child = n.children[i].Assoc(rest, val)
-	}
-	return linear(n.key, n.val, n.full, critbytes(ch, []byte(n.crit)...),
-		addchild(child, n.children...)...)
+	r := n.grow(max(i+1, len(n.children)), i, ch)
+	r.children[i], _ = assoc(r.children[i], rest, val)
+	return r
 }
 
 func (n *rangeNode) Assoc(key string, val Value) IPersistentMap {
@@ -357,27 +388,29 @@ func (n *rangeNode) Assoc(key string, val Value) IPersistentMap {
 	}
 	// Update expanse
 	oldspan := byte(len(n.children))
-	span, start := expanse(ch, n.start, n.start + oldspan)
+	span, start := expanse(ch, n.start, n.start + oldspan-1)
 	
 	if span > oldspan {
 		// Figure out if we're a range, a linear, or a bitmap.
 		count := n.occupied+1
-		if count <= maxLinear {
-			// Prefer a linear
-			crits := make([]byte, count)
-			crits[0] = ch
-			children := make([]IPersistentMap, count)
-			children[0] = makeLeaf(rest, val)
-			next := 1
-			for i, child := range n.children {
-				if child != nil {
-					crits[next] = n.start + byte(i)
-					children[next] = child
-					next++
+		if span > (count+maxRangeWaste) {
+			// We're not a range.
+			if count <= maxLinear {
+				// Prefer a linear
+				crits := make([]byte, count)
+				crits[0] = ch
+				children := make([]IPersistentMap, count)
+				children[0] = makeLeaf(rest, val)
+				next := 1
+				for i, child := range n.children {
+					if child != nil && child != empty {
+						crits[next] = n.start + byte(i)
+						children[next] = child
+						next++
+					}
 				}
+				return linear(n.key, n.val, n.full, string(crits), children...)
 			}
-			return linear(n.key, n.val, n.full, string(crits), children...)
-		} else if span > (count+maxRangeWaste) {
 			// Prefer a bitmap
 			return bitmapFromRange(n, ch, rest, val)
 		}
@@ -387,7 +420,7 @@ func (n *rangeNode) Assoc(key string, val Value) IPersistentMap {
 	// overwriting an existing one.
 	if start > n.start { panic("new start must be <= old start") }
 	if span < oldspan { panic("new span must be >= old span") }
-	children := make([]IPersistentMap, span)
+	children := makeChildren(int(span))
 	copy(children[n.start - start:], n.children)
 	child, added := assoc(children[ch-start], rest, val)
 	children[ch - start] = child
@@ -436,7 +469,7 @@ func (n *bitmapNode) Assoc(key string, val Value) IPersistentMap {
 	}
 
 	// We can be a range
-	children := make([]IPersistentMap, span)
+	children := makeChildren(int(span))
 	index := 0
 	for w:=0; w < 4; w++ {
 		bm := n.bm[w]
@@ -456,7 +489,81 @@ func (e *emptyNode) Without(key string) IPersistentMap {
 	return e
 }
 
+func (l *leaf) Without(key string) IPersistentMap {
+	if key == l.key { return empty }
+	return l
+}
+
+func (n *linearNode) Without(key string) IPersistentMap {
+	crit, match := findcrit(key, n.key)
+	if crit < len(n.key) {
+		// we don't have the element being removed
+		return n
+	}
+
+	if match {
+		return linear(key, nil, false, n.crit, n.children...)
+	}
+
+	_, ch, rest := splitKey(key, crit)
+	i := linearFind(ch, n.crit, n.children)
+	if i >= len(n.children) {
+		// we don't have the element being removed
+		return n
+	}
+	b := n.children[i].Without(rest)
+	if b == empty {
+		// We removed a leaf node -- shrink our children & possibly turn into a leaf or range
+		last := len(n.children)-1
+		children := make([]IPersistentMap, last)
+		copy(children, n.children)
+		crit := make([]byte, last)
+		copy(crit, n.crit)
+		children[i] = n.children[last]
+		crit[i] = n.crit[last]
+		if last > minRangeSize {
+			span, start := expanse(crit[0], crit...)
+			if int(span) < (last+maxRangeWaste) {
+				rchildren := fillSpan(start, span, string(crit), children)
+				return makeRange(n.key, n.val, n.full, start, byte(last), rchildren)
+			}
+		}
+		return linear(n.key, n.val, n.full, string(crit), children...)
+	}
+	children := make([]IPersistentMap, len(n.children))
+	copy(children, n.children)
+	children[i] = b
+	return linear(n.key, n.val, n.full, n.crit, children...)
+}
+
 func (e *emptyNode) Contains(key string) bool {
+	return false
+}
+
+func (l *leaf) Contains(key string) bool {
+	if key == l.key { return true }
+	return false
+}
+
+func (n *linearNode) Contains(key string) bool {
+	crit, match := findcrit(key, n.key)
+	if match && n.full { return true }
+	if crit >= len(key) { return false }
+	_, ch, rest := splitKey(key, crit)
+	i := linearFind(ch, n.crit, n.children)
+	if i >= len(n.children) { return false }
+	return n.children[i].Contains(rest)
+}
+
+func (n *rangeNode) Contains(key string) bool {
+	crit, match := findcrit(key, n.key)
+	if match && n.full { return true }
+	if crit >= len(key) { return false }
+	_, ch, rest := splitKey(key, crit)
+	if ch >= n.start && int(ch) < (int(n.start)+len(n.children)) {
+		i := ch + n.start
+		if n.children[i] != nil { return n.children[i].Contains(rest) }
+	}
 	return false
 }
 
@@ -464,8 +571,38 @@ func (e *emptyNode) ValueAt(key string) Value {
 	return nil
 }
 
+func (l *leaf) ValueAt(key string) Value {
+	if key == l.key {
+		return l.val
+	}
+	return nil
+}
+
+func (n *linearNode) ValueAt(key string) Value {
+	crit, match := findcrit(key, n.key)
+	if match && n.full { return n.val }
+	if crit >= len(key) { return nil }
+	_, ch, rest := splitKey(key, crit)
+	i := linearFind(ch, n.crit, n.children) 
+	if i > len(n.children) { return nil }
+	return n.children[i].ValueAt(rest)
+}
+
 func (e *emptyNode) Count() int {
 	return 0
+}
+
+func (e *leaf) Count() int {
+	return 1
+}
+
+func (l *linearNode) Count() int {
+	count := 0
+	if l.full { count++ }
+	for _, c := range l.children {
+		count += c.Count()
+	}
+	return count
 }
 
 func (e *emptyNode) inorder(prefix string, ch chan Item) {
@@ -479,6 +616,7 @@ func (t *trie) Iter() chan Item {
 }
 
 func NewTrie() IPersistentMap {
-	return empty()
+	return empty
 }
+
 
