@@ -5,6 +5,10 @@ package persistentMap
  See https://github.com/richhickey/clojure/blob/master/src/jvm/clojure/lang/PersistentTreeMap.java
 */
 
+import (
+	"fmt"
+)
+
 type treeNode interface {
 	key() string
 	val() Value
@@ -214,18 +218,24 @@ func (m *persistentSortedMap) Count() int {
 }
 
 func inorder(n treeNode, ch chan Item) {
-	if n == nil {
-		close(ch)
-	} else {
+	if n != nil {
+		if n.left() != nil { fmt.Println("branch left") }
 		inorder(n.left(), ch)
+		fmt.Println("output node")
 		ch <- Item{n.key(), n.val()}
+		if n.right() != nil { fmt.Println("branch right") }
 		inorder(n.right(), ch)
 	}
 }
 
 func (m *persistentSortedMap) Iter() chan Item {
 	ch := make(chan Item)
-	go inorder(m.tree, ch)
+	go func (n treeNode, ch chan Item) {
+		if n != nil {
+			inorder(n, ch)
+		}
+		close(ch)
+	}(m.tree, ch)
 	return ch
 }
 

@@ -3,6 +3,7 @@ package persistentMap
 import (
 	"testing"
 	"fmt"
+	"reflect"
 )
 
 func TestEmptyTrie(t *testing.T) {
@@ -49,6 +50,14 @@ func TestAssocTrie(t *testing.T) {
 	}
 }
 
+func printItems(m IPersistentMap) {
+	typ := reflect.Typeof(m)
+	fmt.Printf("Dumping map(type=%s)...\n", typ.String())
+	for item := range m.Iter() {
+		fmt.Printf("%s: %d\n", item.key, item.val.(int))
+	}
+}
+
 func TestWithoutTrie(t *testing.T) {
 	m := NewTrie()
 	m = m.Assoc("A", 14)
@@ -65,15 +74,15 @@ func TestWithoutTrie(t *testing.T) {
 	m = m.Assoc("3", 3)
 	m = m.Assoc("2", 2)
 
-	if !m.Contains("A") {
-		t.Error("TestWithout: m.Contains('A') is false.")
+	if !m.Contains("T") {
+		t.Error("TestWithout: m.Contains('T') is false.")
 	}
-	w := m.Without("A")
-	if w.Contains("A") {
-		t.Error("TestWithout: w.Contains('A') is true.")
+	w := m.Without("T")
+	if w.Contains("T") {
+		t.Error("TestWithout: w.Contains('T') is true.")
 	}
-	if !m.Contains("A") {
-		t.Error("TestWithout: m.Contains('A') is false.")
+	if !m.Contains("T") {
+		t.Error("TestWithout: m.Contains('T') is false.")
 	}
 }
 
@@ -91,9 +100,9 @@ func TestIterTrie(t *testing.T) {
 	}
 
 	for item := range m.Iter() {
-		if item.key != keys[255 - item.val.(int)] {
-			i := 255 - item.val.(int)
-			t.Error("TestIter: (%d) %s != %s", i, item.key, keys[i])
+		i := item.val.(int)
+		if item.key != keys[i] {
+			t.Error(fmt.Sprintf("TestIter: (%d) %s != %s", i, item.key, keys[i]))
 		}
 	}
 }

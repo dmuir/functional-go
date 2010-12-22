@@ -2,6 +2,8 @@ package persistentMap
 
 import (
 	"fmt"
+	"reflect"
+	"sort"
 )
 
 const maxLinear = 8
@@ -70,18 +72,24 @@ func splitKey(key string, crit int) (string, byte, string) {
 	return key[0:crit], key[crit], key[crit+1:]
 }
 
+func abstract(t interface{}, meth string) {
+	typ := reflect.Typeof(t)
+	panic(fmt.Sprintf("%s doesn't implement %s", typ.String(), meth))
+}
+
 type itrie interface {
 	IPersistentMap
 	inorder(string, chan Item)
 }
 
 type trie struct {}
-func (t *trie) Assoc(string, Value) IPersistentMap { panic("Abstract Base") }
-func (t *trie) Without(string) IPersistentMap { panic("Abstract Base") }
-func (t *trie) Contains(string) bool { panic("Abstract Base") }
-func (t *trie) ValueAt(string) Value { panic("Abstract Base") }
-func (t *trie) Count() int { panic("Abstract Base") }
-func (t *trie) inorder(string, chan Item) { panic("Abstract Base") }
+func (t *trie) Assoc(string, Value) IPersistentMap { abstract(t, "Assoc"); return nil }
+func (t *trie) Without(string) IPersistentMap { abstract(t, "Without"); return nil }
+func (t *trie) Contains(string) bool { abstract(t, "Contains"); return false }
+func (t *trie) ValueAt(string) Value { abstract(t, "ValueAt"); return nil }
+func (t *trie) Count() int { abstract(t, "Count"); return 0 }
+func (t *trie) Iter() chan Item { abstract(t, "Iter"); return nil }
+func (t *trie) inorder(string, chan Item) { abstract(t, "inorder") }
 
 type emptyNode struct {
 	trie
@@ -619,24 +627,78 @@ func (l *leaf) inorder(prefix string, ch chan Item) {
 	if len(prefix) == 0 { close(ch) }
 }
 
+type sortLinearNode struct {
+	crit []byte
+	children []IPersistentMap
+}
+func (n sortLinearNode) Len() int {
+	return len(n.crit)
+}
+func (n sortLinearNode) Less(i, j int) bool {
+	return n.crit[i] < n.crit[j]
+}
+func (n sortLinearNode) Swap(i, j int) {
+	n.crit[i], n.crit[j] = n.crit[j], n.crit[i]
+	n.children[i], n.children[j] = n.children[j], n.children[i]
+}
+
+func (n *linearNode) inorder(prefix string, ch chan Item) {
+	root := len(prefix) == 0
+	prefix += n.key
+	if n.full {
+		ch <- Item{prefix, n.val}
+	}
+	s := sortLinearNode{[]byte(n.crit), n.children}
+	sort.Sort(s)
+	n.crit = string(s.crit)
+	for i := 0; i < len(n.children); i++ {
+		n.children[i].(itrie).inorder(prefix + string(n.crit[i]), ch)
+	}
+	if root { close(ch) }
+}
+
 func (n *rangeNode) inorder(prefix string, ch chan Item) {
+	root := len(prefix) == 0
 	prefix += n.key
 	if n.full {
 		ch <- Item{prefix, n.val}
 	}
 	for i, b := range n.children {
 		if b != nil {
-			prefix += string(n.start+byte(i))
-			b.(itrie).inorder(prefix, ch)
+			b.(itrie).inorder(prefix + string(n.start+byte(i)), ch)
 		}
 	}
-	if len(prefix) == 0 { close(ch) }
+	if root { close(ch) }
 }
 
-func (t *trie) Iter() chan Item {
+func (n *bitmapNode) inorder(prefix string, ch chan Item) {
+	panic("No inorder for bitmapNode yet.")
+}
+
+func iterhelper(t itrie) chan Item {
 	ch := make(chan Item)
 	go t.inorder("", ch)
 	return ch
+}
+
+func (e *emptyNode) Iter() chan Item {
+	return iterhelper(e)
+}
+
+func (l *leaf) Iter() chan Item {
+	return iterhelper(l)
+}
+
+func (n *linearNode) Iter() chan Item {
+	return iterhelper(n)
+}
+
+func (n *rangeNode) Iter() chan Item {
+	return iterhelper(n)
+}
+
+func (n *bitmapNode) Iter() chan Item {
+	return iterhelper(n)
 }
 
 func NewTrie() IPersistentMap {

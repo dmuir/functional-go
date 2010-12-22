@@ -65,15 +65,15 @@ func TestWithout(t *testing.T) {
 	m = m.Assoc("3", 3)
 	m = m.Assoc("2", 2)
 
-	if !m.Contains("A") {
-		t.Error("TestWithout: m.Contains('A') is false.")
+	if !m.Contains("T") {
+		t.Error("TestWithout: m.Contains('T') is false.")
 	}
-	w := m.Without("A")
-	if w.Contains("A") {
-		t.Error("TestWithout: w.Contains('A') is true.")
+	w := m.Without("T")
+	if w.Contains("T") {
+		t.Error("TestWithout: w.Contains('T') is true.")
 	}
-	if !m.Contains("A") {
-		t.Error("TestWithout: m.Contains('A') is false.")
+	if !m.Contains("T") {
+		t.Error("TestWithout: m.Contains('T') is false.")
 	}
 }
 
@@ -90,11 +90,18 @@ func TestIter(t *testing.T) {
 		t.Error("TestIter: m.Count() (%d) != 256", m.Count())
 	}
 
+	printItems(m)
+
+	count := 0
 	for item := range m.Iter() {
+		count++
 		if item.key != keys[255 - item.val.(int)] {
 			i := 255 - item.val.(int)
 			t.Error("TestIter: (%d) %s != %s", i, item.key, keys[i])
 		}
+	}
+	if count != m.Count() {
+		t.Error("Didn't finish iteration.")
 	}
 }
 		
