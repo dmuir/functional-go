@@ -103,6 +103,7 @@ type itrie interface {
 	entryAt(string) itrie
 	count() int
 	inorder(string, chan Item)
+	withsubs(func (byte, itrie))
 	k() string
 	v() Value
 }
@@ -206,6 +207,7 @@ func (l *leaf_t) inorder(prefix string, ch chan Item) {
 	ch <- Item{prefix + l.key, l.val}
 	if len(prefix) == 0 { close(ch) }
 }
+func (l *leaf_t) withsubs(func(byte, itrie)) {}
 func (l *leaf_t) k() string { return l.key }
 func (l *leaf_t) v() Value { return l.val }
 
@@ -411,6 +413,12 @@ func (b *bag_t) inorder(prefix string, ch chan Item) {
 		b.sub[i].inorder(prefix + string(b.crit[i]), ch)
 	}
 	if root { close(ch) }
+}
+func (b *bag_t) withsubs(f func(byte, itrie)) {
+	if !b.sorted() { b.sort() }
+	for i := 0; i < len(b.sub); i++ {
+		f(b.crit[i], b.sub[i])
+	}
 }
 func (b *bag_t) k() string { return b.key }
 func (b *bag_t) v() Value { return b.val }
@@ -667,6 +675,13 @@ func (s *span_t) inorder(prefix string, ch chan Item) {
 	}
 	if root { close(ch) }
 }
+func (s *span_t) withsubs(f func(byte, itrie)) {
+	for i, c := range s.sub {
+		if c == nil { continue }
+		cb := s.start + byte(i)
+		f(cb, c)
+	}
+}
 func (s *span_t) k() string { return s.key }
 func (s *span_t) v() Value { return s.val }
 
@@ -741,25 +756,6 @@ func (b *bitmap_t) setbits(first byte, rest ... byte) {
 }
 func (b *bitmap_t) indexOf(w byte, bit uint64) byte {
 	return countbits(b.bm[w] & (bit-1)) + b.off[w]
-}
-func (b *bitmap_t) itemsWithout(skip byte, mask uint64) ([]byte, []byte) {
-	bytes := make([]byte, len(b.sub))
-	items := make([]byte, len(b.sub))
-	i := 0
-	for w, bm := range b.bm {
-		for bm != 0 {
-			bit := bm ^ (bm & (bm - 1))
-			if int(skip) == w && bit & mask != 0 { continue }
-			bytes[i] = countbits((bit-1)) + byte(64*w)
-			items[i] = b.indexOf(byte(w), bit)
-			bm &= (bm-1)
-			i++
-		}
-	}
-	return bytes, items
-}
-func (b *bitmap_t) items() ([]byte, []byte) {
-	return b.itemsWithout(4, 0)
 }
 func (b *bitmap_t) min() byte {
 	for w, bm := range b.bm {
@@ -903,10 +899,9 @@ func (b *bitmap_t) assoc(key string, val Value) itrie {
 
 	// We can be a span
 	sub := make([]itrie, int(size))
-	bytes, indices := b.items()
-	for i, cb := range bytes {
-		sub[cb - start] = b.sub[indices[i]]
-	}
+	b.withsubs(func(cb byte, t itrie) {
+		sub[cb - start] = t
+	})
 	sub[ch-start] = leaf(rest, val)
 	return span(b.key, b.val, b.full, start, byte(count+1), sub)
 }
@@ -941,20 +936,20 @@ func (b *bitmap_t) without(key string) itrie {
 		if spanOK(size, occupied) {
 			// We can be a span
 			sub := make([]itrie, int(size))
-			bytes, indices := b.itemsWithout(w, bit)
-			for i, cb := range bytes {
-				sub[cb - start] = b.sub[indices[i]]
-			}
+			b.withsubs(func(cb byte, t itrie) {
+				sub[cb - start] = t
+			})
 			return span(b.key, b.val, b.full, start, byte(occupied), sub)
 		}
 		if occupied <= maxBagSize {
 			// We should become a bag
 			sub := make([]itrie, occupied)
-			bytes, indices := b.itemsWithout(w, bit)
-			for dst, src := range indices {
-				sub[dst] = b.sub[src]
-			}
-			return bag(b.key, b.val, b.full, string(bytes), sub...)
+			crit := make([]byte, occupied)
+			i := 0
+			b.withsubs(func(cb byte, t itrie) {
+				crit[i] = cb; sub[i] = t; i++
+			})
+			return bag(b.key, b.val, b.full, string(crit), sub...)
 		}
 		// We should stay a bitmap
 		n := b.clone()
@@ -995,11 +990,22 @@ func (b *bitmap_t) inorder(prefix string, ch chan Item) {
 	if b.full {
 		ch <- Item{prefix, b.val}
 	}
-	bytes, indices := b.items()
-	for i, cb := range bytes {
-		b.sub[indices[i]].inorder(prefix + string(cb), ch)
-	}
+	b.withsubs(func(cb byte, t itrie) {
+		t.inorder(prefix + string(cb), ch)
+	})
 	if root { close(ch) }
+}
+func (b *bitmap_t) withsubs(f func(byte, itrie)) {
+	i := 0
+	for w, bm := range b.bm {
+		for bm != 0 {
+			bit := bm ^ (bm & (bm - 1))
+			cb := countbits(bit-1) + byte(64*w)
+			f(cb, b.sub[i])
+			bm &= (bm-1)
+			i++
+		}
+	}
 }
 func (b *bitmap_t) k() string { return b.key }
 func (b *bitmap_t) v() Value { return b.val }
