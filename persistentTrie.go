@@ -359,9 +359,10 @@ func (n *linearNode) Assoc(key string, val Value) IPersistentMap {
 	}
 	
 	prefix, ch, rest := splitKey(key, crit)
-	_, _ch, _rest := splitKey(n.key, crit)
+	_, _ch, _rest := splitKey(n.key, crit)	
 	if crit < len(n.key) {
-		return linear(prefix, nil, false, critbytes(ch, _ch), makeLeaf(rest, val),
+		return linear(prefix, nil, false, critbytes(ch, _ch),
+			makeLeaf(rest, val),
 			linear(_rest, n.val, n.full, n.crit, n.children...))
 	}
 	i := linearFind(ch, n.crit, n.children)
@@ -371,12 +372,15 @@ func (n *linearNode) Assoc(key string, val Value) IPersistentMap {
 			span, start := expanse(ch, []byte(n.crit)...)
 			if int(span) <= (i+maxRangeWaste) {
 				// Prefer a range, even if we're small enough to stay linear
+				fmt.Println("turning linear into a range.")
 				children := fillSpan(start, span, n.crit, n.children)
 				children[ch-start] = makeLeaf(rest, val)
 				return makeRange(n.key, n.val, n.full, start, byte(i+1), children)
 			}
-		} else if i > maxLinear {
+		}
+		if i > maxLinear {
 			// Prefer a bitmap
+			fmt.Println("turning linear into a bitmap.")
 			return bitmapFromLinear(n, ch, rest, val)
 		}
 	}
@@ -468,16 +472,26 @@ func (n *bitmapNode) Assoc(key string, val Value) IPersistentMap {
 	if !replace { count++ }
 	if replace || int(span) > (count+maxRangeWaste) {
 		// We stay a bitmap
-		b := n.grow(count)
-		if !replace {
-			// New -- update bitmap & offsets
-			b.bm[w] |= bit
-			for ; w < 3; w++ {
-				b.off[w+1]++
-			}
-		}
+		b := new(bitmapNode)
+		*b = *n
+		b.start = start
+		b.end = start + span - 1
+		b.children = make([]IPersistentMap, count)
+		// determine the index for the branch we're adding/replacing
 		index := countbits(n.bm[w] & (bit-1)) + n.off[w]
-		b.children[index], _ = assoc(n.children[index], rest, val)
+		// copy branches preceeding the branch we're adding/replacing
+		if index > 0 { copy(b.children[0:index], n.children[0:index]) }
+		if !replace {
+			b.children[index] = makeLeaf(rest, val)
+			b.bm[w] |= bit
+			for i := w; i < 3; i++ {
+				b.off[i+1]++
+			}
+			copy(b.children[index+1:], n.children[index:])
+		} else {
+			b.children[index] = n.children[index].Assoc(rest, val)
+			copy(b.children[index+1:], n.children[index+1:])
+		}
 		return b
 	}
 
@@ -487,8 +501,8 @@ func (n *bitmapNode) Assoc(key string, val Value) IPersistentMap {
 	for w:=0; w < 4; w++ {
 		bm := n.bm[w]
 		for bm != 0 {
-			bit := bm ^ (bm - 1)
-			dst := (countbits(bit-1) + byte(64*w)) - start
+			bit := bm ^ (bm - 1)// this isn't correct.
+			dst := (countbits((bit-1)) + byte(64*w)) - start
 			bm &= (bm-1)
 			children[dst] = n.children[index]
 			index++
@@ -549,6 +563,14 @@ func (n *linearNode) Without(key string) IPersistentMap {
 	return linear(n.key, n.val, n.full, n.crit, children...)
 }
 
+func (n *rangeNode) Without(key string) IPersistentMap {
+	panic("Without not implemented for range nodes.")
+}
+
+func (n *bitmapNode) Without(key string) IPersistentMap {
+	panic("Without not implemented for bitmap nodes.")
+}
+
 func (e *emptyNode) Contains(key string) bool {
 	return false
 }
@@ -580,6 +602,20 @@ func (n *rangeNode) Contains(key string) bool {
 	return false
 }
 
+func (n *bitmapNode) Contains(key string) bool {
+	crit, match := findcrit(key, n.key)
+	if match && n.full { return true }
+	if crit >= len(key) { return false }
+	_, ch, rest := splitKey(key, crit)
+	w := ch >> 6
+	bit := uint64(1) << (ch & 0x3f)
+	if n.bm[w] & bit != 0 {
+		index := countbits(n.bm[w] & (bit-1))
+		return n.children[index].Contains(rest)
+	}
+	return false
+}
+
 func (e *emptyNode) ValueAt(key string) Value {
 	return nil
 }
@@ -599,6 +635,32 @@ func (n *linearNode) ValueAt(key string) Value {
 	i := linearFind(ch, n.crit, n.children) 
 	if i > len(n.children) { return nil }
 	return n.children[i].ValueAt(rest)
+}
+
+func (n *rangeNode) ValueAt(key string) Value {
+	crit, match := findcrit(key, n.key)
+	if match && n.full { return n.val }
+	if crit >= len(key) { return nil }
+	_, ch, rest := splitKey(key, crit)
+	if ch >= n.start && int(ch) < (int(n.start)+len(n.children)) {
+		i := ch + n.start
+		if n.children[i] != nil { return n.children[i].ValueAt(rest) }
+	}
+	return nil
+}
+
+func (n *bitmapNode) ValueAt(key string) Value {
+	crit, match := findcrit(key, n.key)
+	if match && n.full { return n.val }
+	if crit >= len(key) { return nil }
+	_, ch, rest := splitKey(key, crit)
+	w := ch >> 6
+	bit := uint64(1) << (ch & 0x3f)
+	if n.bm[w] & bit != 0 {
+		index := countbits(n.bm[w] & (bit-1))
+		return n.children[index].ValueAt(rest)
+	}
+	return nil
 }
 
 func (e *emptyNode) Count() int {
