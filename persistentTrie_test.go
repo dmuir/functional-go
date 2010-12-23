@@ -74,9 +74,6 @@ func TestWithoutTrie(t *testing.T) {
 	m = m.Assoc("3", 3)
 	m = m.Assoc("2", 2)
 
-	mT := reflect.Typeof(m)
-	fmt.Printf("typeof(m) = %s\n", mT.String())
-
 	if !m.Contains("T") {
 		t.Errorf("TestWithout: m.Contains('T') is false.")
 	}
