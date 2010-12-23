@@ -358,27 +358,42 @@ func (b *bag_t) without(key string) itrie {
 	n := b.sub[i].without(rest)
 	if n == nil {
 		// We removed a leaf -- shrink our children & possibly turn into a leaf.
-		// We could possibly turn into a span, but I can't figure out how to do that
-		// without doing an extra set of allocations, and we're already abusing the
-		// GC enough.
 		last := len(b.sub)-1
+		if i < last {
+			// We're going to move the subtrie we're "removing" to the end of 
+			// the slice.  Even though these are "immutable" data structures,
+			// we can do this since we're not changing the externally visible
+			// behavior
+			b.sub[i], b.sub[last] = b.sub[last], b.sub[i]
+			b.crit[i], b.crit[last] = b.crit[last], b.crit[i]
+			b.flags &= ^bagSorted
+			i = last
+		}
 		if last == 0 {
-			if !b.full() { panic("we should have a value if we have no sub-tries.") }
+			if !b.full() {
+				panic("we should have a value if we have no sub-tries.")
+			}
 			return leaf(b.key, b.val)
 		} else if last == 1 && !b.full() {
-			o := 1 - i
-			if o != 0 && o != 1 { panic("should only have 2 sub-tries.") }
-			key = b.key + string(b.crit[o]) + b.sub[o].k()
-			return b.sub[o].cloneWithKey(key)
+			key = b.key + string(b.crit[0]) + b.sub[0].k()
+			return b.sub[0].cloneWithKey(key)
 		}
+		if last >= minSpanSize {
+			size, start := expanse(b.crit[0], b.crit[1:last]...)
+			if spanOK(size, last) {
+				// We can be a range
+				sub := make([]itrie, int(size))
+				b.withsubs(func(cb byte, t itrie) {
+					sub[cb - start] = t
+				})
+				return span(b.key, b.val, b.full(), start, byte(last), sub)
+			}
+		}
+		// Still a bag.
 		sub := make([]itrie, last)
-		copy(sub, b.sub)
+		copy(sub, b.sub[:last])
 		crit := make([]byte, last)
-		copy(crit, b.crit[:])
-		if i < last {
-			sub[i] = b.sub[last]
-			crit[i] = b.crit[last]
-		}
+		copy(crit, b.crit[:last])
 		return bag(b.key, b.val, b.full(), string(crit), sub...)
 	}
 	b = b.clone()
