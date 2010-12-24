@@ -2,10 +2,137 @@ package persistentMap
 
 import (
 	"testing"
+	"testing/quick"
 	"fmt"
+	"rand"
 	"reflect"
 )
 
+func slowcount(bits uint64) int {
+	count := 0
+	pos := 0
+	for bits != 0 {
+		bit := uint64(1) << uint(pos)
+		if bits & bit != 0 {
+			count++
+			bits &= ^bit
+		}
+		pos++
+	}
+	return count
+}
+
+func TestCountbits(t *testing.T) {
+	if c := countbits(0x0); c != 0 {
+		t.Errorf("TestCountbits: %d != 0", c)
+	}
+	if c := countbits(0xffffffffffffffff); c != 64 {
+		t.Errorf("TestCountbits: %d != 64", c)
+	}
+	if c := countbits(0x8000000000000000); c != 1 {
+		t.Errorf("TestCountbits: %d != 1", c)
+	}
+	if c := countbits(0x1); c != 1 {
+		t.Errorf("TestCountbits: %d != 1", c)
+	}
+
+	check := func(x uint64) bool {
+		a := countbits(x)
+		b := slowcount(x)
+		return int(a) == b
+	}
+	if err := quick.Check(check, nil); err != nil {
+		t.Error(err)
+	}
+}
+
+func BenchmarkCountbits(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = countbits(0xfedcba9876543210)
+	}
+}
+
+func BenchmarkReversebits(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = reverse(0xfedcba9876543210)
+	}
+}
+
+func BenchmarkMinbit(b *testing.B) {
+	var bm bitmap_t
+	bm.bm[3] = 0x0000000080000000
+	for i := 0; i < b.N; i++ {
+		_ = bm.min()
+	}
+}
+
+func BenchmarkMaxbit(b *testing.B) {
+	var bm bitmap_t
+	bm.bm[0] = 0x0000000080000000
+	for i := 0; i < b.N; i++ {
+		_ = bm.max()
+	}
+}
+
+func TestReversebits(t *testing.T) {
+	if c := reverse(0x0); c != 0 {
+		t.Errorf("TestReversebits: %x != 0", c)
+	}
+	if c := reverse(0xffffffffffffffff); c != 0xffffffffffffffff {
+		t.Errorf("TestReversebits: %x != 0xffffffffffffffff", c)
+	}
+	if c := reverse(0x1); c != 0x8000000000000000 {
+		t.Errorf("TestReversebits: %x != 0x8000000000000000", c)
+	}
+	if c := reverse(0x8000000000000000); c != 0x1 {
+		t.Errorf("TestReversebits: %x != 0x1", c)
+	}
+	if c := reverse(0x0f0f000000000000); c != 0x000000000000f0f0 {
+		t.Errorf("TestReversebits: %x != 0x000000000000f0f0", c)
+	}
+}
+
+func TestMinbit(t *testing.T) {
+	var b bitmap_t
+	b.bm[0] = 0x1
+	if c := b.min(); c != 0 {
+		t.Errorf("TestMinbit: %d != 0", c)
+	}
+	b.bm[0] = 1 << 55
+	if c := b.min(); c != 55 {
+		t.Errorf("TestMinbit: %d != 55", c)
+	}
+	b.bm[0] |= 0xff00000000000000
+	if c := b.min(); c != 55 {
+		t.Errorf("TestMinbit: %d != 55", c)
+	}
+	b.bm[0] = 0
+	b.bm[2] = 0x1
+	if c := b.min(); c != 128 {
+		t.Errorf("TestMinbit: %d != 128", c)
+	}
+}
+
+func TestMaxbit(t *testing.T) {
+	var b bitmap_t
+	b.bm[0] = 0x1
+	if c:= b.max(); c != 0 {
+		t.Errorf("TestMaxbit: %d != 0", c)
+	}
+	b.bm[0] = 1 << 55
+	if c := b.max(); c != 55 {
+		t.Errorf("TestMaxBit: %d != 55", c)
+	}
+	b.bm[0] |= 0x007fffffffffffff
+	if c := b.max(); c != 55 {
+		t.Errorf("TestMaxBit: %d != 55", c)
+	}
+	b.bm[2] = 0x02
+	if c := b.max(); c != 129 {
+		t.Errorf("TestMaxbit: %d != 129", c)
+	}
+}
+	
 func TestEmptyTrie(t *testing.T) {
 	m := NewTrie()
 	if m.Count() != 0 {
@@ -84,6 +211,25 @@ func TestWithoutTrie(t *testing.T) {
 	if !m.Contains("T") {
 		t.Errorf("TestWithout: m.Contains('T') is false.")
 	}
+	w = w.Without("J")
+	if w.Contains("J") {
+		t.Errorf("TestWithout: w.Contains('J') is true.")
+	}
+	w = w.Without("Q")
+	if w.Contains("Q") {
+		t.Errorf("TestWithout: w.Contains('Q') is true.")
+	}
+	w = w.Without("K")
+	if w.Contains("K") {
+		t.Errorf("TestWithout: w.Contains('K') is true.")
+	}
+	w = w.Without("A")
+	if w.Contains("A") {
+		t.Errorf("TestWithout: w.Contains('A') is true.")
+	}
+	if w.Count() != 8 {
+		t.Errorf("TestWithout: w.Count() != 8 (%d)", w.Count())
+	}
 }
 
 func TestIterTrie(t *testing.T) {
@@ -112,3 +258,19 @@ func TestIterTrie(t *testing.T) {
 	}
 }
 		
+func randomKey() string {
+	return fmt.Sprintf("%x", rand.Int63())
+}
+
+func BenchmarkKeys(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = randomKey()
+	}
+}
+
+func BenchmarkAssoc(b *testing.B) {
+	m := NewTrie()
+	for i := 0; i < b.N; i++ {
+		m = m.Assoc(randomKey(), i)
+	}
+}

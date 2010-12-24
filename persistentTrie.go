@@ -900,12 +900,14 @@ func (b *bitmap_t) assoc(key string, val Value) itrie {
 		// determine the index for the branch we're adding/replacing
 		index := n.indexOf(w, bit)
 		// copy branches preceeding the branch we're adding/replacing
-		copy(b.sub[0:index], n.sub[0:index])
+		copy(n.sub[0:index], b.sub[0:index])
 		if !replace {
 			n.sub[index] = leaf(rest, val)
 			n.setbit(w, bit)
 			copy(n.sub[index+1:], b.sub[index:])
 		} else {
+			fmt.Sprintf("index: %d, len: %d",
+				index, len(b.sub))
 			n.sub[index] = b.sub[index].assoc(rest, val)
 			copy(n.sub[index+1:], b.sub[index+1:])
 		}
