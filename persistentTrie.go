@@ -33,17 +33,17 @@ func max(a, b int) int {
 	return b
 }
 
-func expanse(first byte, rest ... byte) (byte, byte) {
+func expanse(first byte, rest ... byte) (int, byte) {
 	low := first
 	high := first
 	for _, v := range rest {
 		if v < low { low = v }
 		if v > high { high = v }
 	}
-	return high - low + 1, low
+	return int(high) - int(low) + 1, low
 }
 
-func spanOK(size byte, count int) bool {
+func spanOK(size int, count int) bool {
 	return int(size) <= (count + maxSpanWaste)
 }
 
@@ -83,7 +83,7 @@ func critbytes(first byte, rest ... byte) string {
 }
 
 
-func assoc(m itrie, key string, val Value) (itrie, byte) {
+func assoc(m itrie, key string, val Value) (itrie, int) {
 	if m != nil {
 		return m.assoc(key, val), 0
 	}
@@ -180,7 +180,7 @@ func (l *leaf_t) cloneWithKeyValue(key string, val Value) itrie {
 func (l *leaf_t) assoc(key string, val Value) itrie {
 	crit, match := findcrit(key, l.key)
 	if match {
-		l.cloneWithKeyValue(key, val)
+		return l.cloneWithKeyValue(key, val)
 	}
 
 	prefix, ch, rest := splitKey(key, crit)
@@ -228,7 +228,7 @@ type bag_t struct {
 	key string
 	val Value
 	flags byte
-	crit [7]byte
+	crit [maxBagSize]byte
 	sub []itrie
 }
 func (b *bag_t) full() bool { return b.flags & bagFull != 0 }
@@ -258,6 +258,7 @@ func (b *bag_t) cloneWithKeyValue(key string, val Value) itrie {
 	n := b.clone()
 	n.key = str(key)
 	n.val = val
+	n.flags |= bagFull
 	return n
 }
 func (b *bag_t) with(i int, ch byte, key string, val Value) itrie {
@@ -317,7 +318,7 @@ func (b *bag_t) assoc(key string, val Value) itrie {
 					sub[b.crit[i] - start] = b.sub[i]
 				}
 				sub[ch-start] = leaf(rest, val)
-				return span(b.key, b.val, b.full(), start, byte(i+1), sub)
+				return span(b.key, b.val, b.full(), start, i+1, sub)
 			}
 		}
 		if i >= maxBagSize {
@@ -386,7 +387,7 @@ func (b *bag_t) without(key string) itrie {
 				b.withsubs(func(cb byte, t itrie) {
 					sub[cb - start] = t
 				})
-				return span(b.key, b.val, b.full(), start, byte(last), sub)
+				return span(b.key, b.val, b.full(), start, last, sub)
 			}
 		}
 		// Still a bag.
@@ -471,11 +472,11 @@ type span_t struct {
 	val Value
 	full bool
 	start byte
-	occupied byte
+	occupied uint16
 	sub []itrie
 }
-func span(key string, val Value, full bool, start byte, occupied byte, sub []itrie) itrie {
-	return &span_t{str(key), val, full, start, occupied, sub}
+func span(key string, val Value, full bool, start byte, occupied int, sub []itrie) itrie {
+	return &span_t{str(key), val, full, start, uint16(occupied), sub}
 }
 func (r *span_t) clone() *span_t {
 	n := new(span_t)
@@ -493,6 +494,7 @@ func (r *span_t) cloneWithKeyValue(key string, val Value) itrie {
 	n := r.clone()
 	n.key = str(key)
 	n.val = val
+	n.full = true
 	return n
 }
 func (s *span_t) assoc(key string, val Value) itrie {
@@ -508,8 +510,8 @@ func (s *span_t) assoc(key string, val Value) itrie {
 			leaf(rest, val), s.cloneWithKey(_rest))
 	}
 	// Update expanse
-	oldsize := byte(len(s.sub))
-	size, start := expanse(ch, s.start, s.start + oldsize-1)
+	oldsize := len(s.sub)
+	size, start := expanse(ch, s.start, byte(int(s.start) + oldsize-1))
 	
 	if size > oldsize {
 		// Figure out if we're a span, a bag, or a bitmap.
@@ -545,33 +547,33 @@ func (s *span_t) assoc(key string, val Value) itrie {
 	copy(sub[s.start - start:], s.sub)
 	child, added := assoc(sub[ch-start], rest, val)
 	sub[ch - start] = child
-	return span(s.key, s.val, s.full, start, s.occupied+added, sub)
+	return span(s.key, s.val, s.full, start, int(s.occupied)+added, sub)
 }
-func (s *span_t) firstAfter(i byte) byte {
+func (s *span_t) firstAfter(i int) int {
 	i++
-	for ; int(i) < len(s.sub); i++ {
+	for ; i < len(s.sub); i++ {
 		if s.sub[i] != nil { return i }
 	}
 	panic("no further occupied elements in span")
 }
-func (s *span_t) lastBefore(i byte) byte {
+func (s *span_t) lastBefore(i int) int {
 	i--
 	for ; i >= 0; i-- {
 		if s.sub[i] != nil { return i }
 	}
 	panic("no prior occupied elements in span")
 }
-func (s *span_t) expanseWithout(ch byte) (byte, byte) {
-	var low, high byte = s.start, s.start + byte(len(s.sub)-1)
+func (s *span_t) expanseWithout(ch byte) (int, byte) {
+	low, high := s.start, int(s.start) + len(s.sub)-1
 	if ch == low {
 		i := s.firstAfter(0)
-		return high - low - i + byte(1), low + byte(i)
+		return high - int(low) - i + 1, low + byte(i)
 	}
-	if ch == high {
+	if int(ch) == high {
 		i := s.lastBefore(high)
 		return i + 1, low
 	}
-	return high - low + 1, low
+	return high - int(low) + 1, low
 }
 func (s *span_t) without(key string) itrie {
 	crit, match := findcrit(key, s.key)
@@ -636,7 +638,7 @@ func (s *span_t) without(key string) itrie {
 				offset := start - s.start
 				copy(sub[0:i], s.sub[offset:i])
 				copy(sub[i:], s.sub[offset+i+1:])
-				return span(s.key, s.val, s.full, start, occupied, sub)
+				return span(s.key, s.val, s.full, start, int(occupied), sub)
 			}
 		}
 		// We should become a bag
@@ -792,13 +794,6 @@ func (b *bitmap_t) max() byte {
 func (b *bitmap_t) minmax() (byte, byte) {
 	return b.min(), b.max()
 }
-func (b *bitmap_t) grow(num int) *bitmap_t {
-	n := new(bitmap_t)
-	*n = *b
-	n.sub = make([]itrie, num)
-	copy(n.sub, b.sub)
-	return n
-}
 func bitmapFromBag(b *bag_t, ch byte, key string, val Value) itrie {
 	bm := new(bitmap_t)
 	bm.key = b.key
@@ -838,10 +833,13 @@ func bitmapFromSpan(s *span_t, ch byte, key string, val Value) itrie {
 	if ch < s.start {
 		// The new leaf gets the first index.
 		b.sub[index] = leaf(key, val)
+		index++
 	}
 	critindex := 0
 	for i, child := range s.sub {
-		crits[critindex] = byte(i)+s.start
+		if child == nil { continue }
+		cb := i + int(s.start)
+		crits[critindex] = byte(cb)
 		critindex++
 		b.sub[index] = child
 		index++
@@ -869,6 +867,7 @@ func (b *bitmap_t) cloneWithKeyValue(key string, val Value) itrie {
 	n := b.clone()
 	n.key = str(key)
 	n.val = val
+	n.full = true
 	return n
 }
 
@@ -906,10 +905,11 @@ func (b *bitmap_t) assoc(key string, val Value) itrie {
 			n.setbit(w, bit)
 			copy(n.sub[index+1:], b.sub[index:])
 		} else {
-			fmt.Sprintf("index: %d, len: %d",
-				index, len(b.sub))
 			n.sub[index] = b.sub[index].assoc(rest, val)
 			copy(n.sub[index+1:], b.sub[index+1:])
+		}
+		if int(countbits(n.bm[3]))+int(n.off[3]) > len(n.sub) {
+			panic("more bits set than we have sub-tries.")
 		}
 		return n
 	}
@@ -920,7 +920,7 @@ func (b *bitmap_t) assoc(key string, val Value) itrie {
 		sub[cb - start] = t
 	})
 	sub[ch-start] = leaf(rest, val)
-	return span(b.key, b.val, b.full, start, byte(count+1), sub)
+	return span(b.key, b.val, b.full, start, count+1, sub)
 }
 func (b *bitmap_t) without(key string) itrie {
 	crit, match := findcrit(key, b.key)
@@ -956,7 +956,7 @@ func (b *bitmap_t) without(key string) itrie {
 			b.withsubs(func(cb byte, t itrie) {
 				sub[cb - start] = t
 			})
-			return span(b.key, b.val, b.full, start, byte(occupied), sub)
+			return span(b.key, b.val, b.full, start, occupied, sub)
 		}
 		if occupied <= maxBagSize {
 			// We should become a bag
