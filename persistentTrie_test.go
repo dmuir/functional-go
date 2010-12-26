@@ -132,6 +132,119 @@ func TestMaxbit(t *testing.T) {
 		t.Errorf("TestMaxbit: %d != 129", c)
 	}
 }
+
+func checkExpanse(e, ex expanse_t, t *testing.T) {
+	if e.low > e.high {
+		t.Errorf("e.low must be <= e.high (%d(%c) > %d(%c))", e.low, e.low, e.high, e.high)
+	}
+	if e.low != ex.low {
+		t.Errorf("Expected e.low: %d(%c), got %d(%c)", ex.low, ex.low, e.low, e.low)
+	}
+	if e.high != ex.high {
+		t.Errorf("Expected e.high: %d(%c), got %d(%c)", ex.high, ex.high, e.high, e.high)
+	}
+	if e.size != ex.size {
+		t.Errorf("Expected e.size: %d, got %d", ex.size, e.size)
+	}
+}
+
+func TestExpanse(t *testing.T) {
+	checkExpanse(expanse('a', 'b'), expanse_t{'a', 'b', 2}, t)
+	checkExpanse(expanse('b', 'a'), expanse_t{'a', 'b', 2}, t)
+	checkExpanse(expanse(0, 255), expanse_t{0, 255, 256}, t)
+	checkExpanse(expanse(255, 0), expanse_t{0, 255, 256}, t)
+	checkExpanse(expanse(1, 10).with(9), expanse_t{1, 10, 10}, t)
+	checkExpanse(expanse(10, 1).with(11), expanse_t{1, 11, 11}, t)
+}
+
+func checkTrie(b itrie, exoccupied int, exp expanse_t, check int, t *testing.T) {
+	if t != nil {
+		if occupied := b.occupied(); occupied != exoccupied {
+			t.Errorf("Expected occupied = %d, got %d", exoccupied, occupied)
+		}
+		checkExpanse(b.expanse(), exp, t)
+	}
+}
+		
+func testBag(t *testing.T) *bag_t {
+	check := 1
+	b := bag2("", nil, false, 'f', 'b', leaf("oo", 1), leaf("ar", 2))
+	checkTrie(b, 2, expanse('f', 'b'), check, t); check++
+	b = bag(b, 'e', leaf("at", 4))
+	checkTrie(b, 3, expanse('f', 'b'), check, t); check++
+	b = bag(b, 'a', leaf("te", 5))
+	checkTrie(b, 4, expanse('f', 'a'), check, t); check++
+	b = bag(b, 'd', leaf("og", 7))
+	checkTrie(b, 5, expanse('f', 'a'), check, t); check++
+	return b
+}
+
+func TestBag(t *testing.T) {
+	b := testBag(t)
+	count := 0
+	b.withsubs(0, 256, func(cb byte, t itrie) { count++ })
+	if count != 5 {
+		t.Errorf("Expected 5 sub-tries, got %d", count)
+	}
+	e1 := b.expanseWithout('a')
+	b1 := bagWithout(b, e1, 'a')
+	checkTrie(b1, 4, expanse('f', 'b'), 1, t)
+	e2 := b.expanseWithout('e')
+	b2 := bagWithout(b, e2, 'e')
+	checkTrie(b2, 4, expanse('f', 'a'), 2, t)
+	e3 := b1.expanseWithout('f')
+	b3 := bagWithout(b1, e3, 'f')
+	checkTrie(b3, 3, expanse('e', 'b'), 3, t)
+}
+func TestSpan(t *testing.T) {
+	check := 1
+	b := testBag(nil)
+	e := b.expanse()
+	e = e.with('c')
+	s := span(b, e, 'c', leaf("ar", 8))
+	checkTrie(s, 6, expanse('a', 'f'), check, t); check++
+	e = e.with('g')
+	s = span(s, e, 'g', leaf("irl", 9))
+	checkTrie(s, 7, expanse('a', 'g'), check, t); check++
+	
+	e1 := s.expanseWithout('c')
+	s1 := spanWithout(s, e1, 'c')
+	checkTrie(s1, 6, expanse('a', 'g'), check, t); check++
+	e2 := s.expanseWithout('a')
+	s2 := spanWithout(s, e2, 'a')
+	checkTrie(s2, 6, expanse('b', 'g'), check, t); check++
+	e3 := s2.expanseWithout('g')
+	s3 := spanWithout(s2, e3, 'g')
+	checkTrie(s3, 5, expanse('b', 'f'), check, t); check++
+}
+
+func printExpanse(e expanse_t) {
+	fmt.Printf("e.low = %d(%c), e.high = %d(%c), e.size = %d\n", e.low, e.low, e.high, e.high, e.size)
+}
+func printBitmap(b [4]uint64) {
+	for _, bm := range b {
+		fmt.Printf("               %064b\n", bm)
+	}
+}
+
+func TestBitmap(t *testing.T) {
+	check := 1
+	b := testBag(nil)
+	bm := bitmap(b, 'c', leaf("ar", 8))
+	checkTrie(bm, 6, expanse('a', 'f'), check, t); check++
+	bm = bitmap(bm, 'g', leaf("irl", 9))
+	checkTrie(bm, 7, expanse('a', 'g'), check, t); check++
+	
+	e1 := bm.expanseWithout('c')
+	bm1 := bitmapWithout(bm, e1, 'c')
+	checkTrie(bm1, 6, expanse('a', 'g'), check, t); check++
+	e2 := bm.expanseWithout('a')
+	bm2 := bitmapWithout(bm, e2, 'a')
+	checkTrie(bm2, 6, expanse('b', 'g'), check, t); check++
+	e3 := bm2.expanseWithout('g')
+	bm3 := bitmapWithout(bm2, e3, 'g')
+	checkTrie(bm3, 5, expanse('b', 'f'), check, t); check++
+}
 	
 func TestEmptyTrie(t *testing.T) {
 	m := NewTrie()

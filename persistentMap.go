@@ -18,4 +18,5 @@ type IPersistentMap interface {
 	ValueAt(key string) Value
 	Count() int
 	Iter() chan Item
+	debugPrint()
 }
