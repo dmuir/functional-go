@@ -125,7 +125,7 @@ type itrie interface {
 	expanseWithout(byte) expanse_t
 	inorder(string, chan Item)
 	withsubs(start uint, end uint, fn func (byte, itrie))
-	debugPrint()
+	debugPrint(string)
 }
 
 /*
@@ -136,8 +136,8 @@ type itrie interface {
 type trie struct {
 	n itrie
 }
-func (t *trie) debugPrint() {
-	if t.n != nil { t.n.debugPrint() } else { fmt.Println("empty") }
+func (t *trie) debugPrint(prefix string) {
+	if t.n != nil { t.n.debugPrint(prefix) } else { fmt.Print("%sempty\n", prefix) }
 }
 func (t *trie) Assoc(key string, val Value) IPersistentMap {
 	n, _ := assoc(t.n, key, val)
@@ -236,7 +236,7 @@ func (l *leaf_t) count() int { return 1 }
 func (l *leaf_t) occupied() int { return 0 }
 func (l *leaf_t) expanse() expanse_t { return expanse0() }
 func (l *leaf_t) expanseWithout(byte) expanse_t { return expanse0() }
-func (l *leaf_t) debugPrint() { fmt.Println("leaf") }
+func (l *leaf_t) debugPrint(prefix string) { fmt.Printf("%sleaf -- key: %s\n", prefix, l.key_) }
 
 
 /*
@@ -332,15 +332,22 @@ func (b *bag_t) with(size, i int, cb byte, key string, val Value) (itrie, int) {
 	n := new(bag_t)
 	*n = *b
 	n.sub = make([]itrie, size)
-	if size > maxBagSize { panic("Don't make bag's with more than 7 elts.") }
+	if size > maxBagSize {
+		panic(fmt.Sprintf("Don't make bag's with more than %d elts.", maxBagSize))
+	}
 	copy(n.crit[:i], b.crit[:i])
 	copy(n.sub[:i], b.sub[:i])
-	var o itrie = nil
-	var inc int
-	if i < len(b.sub) && b.crit[i] == cb { o = b.sub[i] } else { inc = 1 }
-	n.crit[i] = cb; t, added := assoc(o, key, val); n.sub[i] = t
-	copy(n.crit[i+inc:], b.crit[i:])
-	copy(n.sub[i+inc:], b.sub[i:])
+	src, dst, added := i, i, 0
+	if size == len(b.sub) {
+		// We're modifying an existing sub-trie
+		if cb != b.crit[i] { panic("We should be modifying a sub-trie") }
+		n.sub[dst], added = b.sub[src].assoc(key, val); dst++; src++
+	} else {
+		n.crit[dst] = cb
+		n.sub[dst], added = assoc(nil, key, val); dst++
+	}
+	copy(n.crit[dst:], b.crit[src:])
+	copy(n.sub[dst:], b.sub[src:])
 	n.count_ = b.count_ + added
 	return n, added
 }
@@ -489,10 +496,11 @@ func (b *bag_t) expanseWithout(cb byte) expanse_t {
 	} else if cb == b.crit[0] { return expanse0() }
 	return b.expanse()
 }
-func (b *bag_t) debugPrint() {
-	fmt.Println("bag")
+func (b *bag_t) debugPrint(prefix string) {
+	fmt.Printf("%sbag -- prefix: %s, full: %v\n", prefix, b.key_, b.full)
 	for i, t := range b.sub {
-		fmt.Printf(" cb: %d(%c) %T\n", b.crit[i], b.crit[i], t)
+		fmt.Printf("%s cb: %d(%c) %T\n", prefix, b.crit[i], b.crit[i], t)
+		t.debugPrint(prefix+"  ")
 	}
 }
 
@@ -572,10 +580,9 @@ func (s *span_t) with(e expanse_t, cb byte, key string, val Value) (itrie, int) 
 	n.start = e.low
 	n.sub = make([]itrie, int(e.size))
 	copy(n.sub[s.start - n.start:], s.sub)
-	i := int(cb - s.start)
-	var o itrie
-	if i < len(s.sub) { o = s.sub[i] }
-	t, added := assoc(o, key, val); n.sub[cb - n.start] = t
+	i, added := int(cb - n.start), 0
+	o := n.sub[i]
+	n.sub[i], added = assoc(o, key, val)
 	n.count_ += added
 	if o == nil { n.occupied_++ }
 	return n, added
@@ -599,7 +606,7 @@ func (s *span_t) assoc(key string, val Value) (itrie, int) {
 	if e.size > e0.size {
 		// Figure out if we're a span, a bag, or a bitmap.
 		count := int(s.occupied_)+1
-		if spanOK(e, count) {
+		if !spanOK(e, count) {
 			// We're not a span.
 			if count <= maxBagSize {
 				return bag(s, cb, leaf(rest, val)), 1
@@ -759,12 +766,13 @@ func (s *span_t) val() Value { return s.val_ }
 func (s *span_t) count() int { return s.count_ }
 func (s *span_t) occupied() int { return int(s.occupied_) }
 func (s *span_t) expanse() expanse_t { return expanse(s.start, s.start+byte(len(s.sub)-1)) }
-func (s *span_t) debugPrint() {
-	fmt.Println("span")
+func (s *span_t) debugPrint(prefix string) {
+	fmt.Printf("%sspan -- prefix: %s, full: %v\n", prefix, s.key_, s.full)
 	for i, t := range s.sub {
 		if s.sub[i] == nil { continue }
 		cb := s.start + byte(i)
-		fmt.Printf(" cb: %d(%c) %T\n", cb, cb, t)
+		fmt.Printf("%s cb: %d(%c) %T\n", prefix, cb, cb, t)
+		t.debugPrint(prefix + "  ")
 	}
 }
 
@@ -929,15 +937,18 @@ func (b *bitmap_t) with(cb byte, key string, val Value) (itrie, int) {
 	*n = *b
 	w, bit := bitpos(uint(cb))
 	size := len(b.sub)
-	var inc int
-	if !b.isset(w, bit) { inc = 1 }
-	n.sub = make([]itrie, size+inc)
+	if !b.isset(w, bit) { size++ }
+	n.sub = make([]itrie, size)
 	i := b.indexOf(w, bit)
 	copy(n.sub[:i], b.sub[:i])
-	var o itrie
-	if b.isset(w, bit) { o = b.sub[i] }
-	t, added := assoc(o, key, val); n.sub[i] = t; n.setbit(w, bit)
-	copy(n.sub[i+inc:], b.sub[i:])
+	src, dst, added := i, i, 0
+	if b.isset(w, bit) {
+		// replace existing sub-trie
+		n.sub[dst], added = b.sub[src].assoc(key, val); dst++; src++
+	} else {
+		n.sub[dst], added = assoc(nil, key, val); n.setbit(w, bit); dst++
+	}
+	copy(n.sub[dst:], b.sub[src:])
 	n.count_ = b.count_ + added
 	return n, added
 }
@@ -1078,10 +1089,11 @@ func (b *bitmap_t) expanseWithout(cb byte) expanse_t {
 	return expanse(e.low, e.high)
 	
 }
-func (b *bitmap_t) debugPrint() {
-	fmt.Println("bitmap")
+func (b *bitmap_t) debugPrint(prefix string) {
+	fmt.Printf("%sbitmap - prefix: %s, full: %v\n", prefix, b.key_, b.full)
 	pr := func(cb byte, t itrie) {
-		fmt.Printf(" cb: %d(%c) %T\n", cb, cb, t)
+		fmt.Printf("%s cb: %d(%c) %T\n", prefix, cb, cb, t)
+		t.debugPrint(prefix + "  ")
 	}
 	b.withsubs(0, 256, pr)
 }

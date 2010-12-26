@@ -360,8 +360,13 @@ func TestIterTrie(t *testing.T) {
 
 	count := 0
 	for item := range m.Iter() {
+		if item.val.(int) != 255 - count {
+			fmt.Printf("skipped...\n")
+			count = 255 - item.val.(int)
+		}
 		count++
 		i := item.val.(int)
+		fmt.Printf("key: %s, val: %d\n", item.key, item.val.(int))
 		if item.key != keys[i] {
 			t.Errorf("TestIter: (%d) %s != %s", i, item.key, keys[i])
 		}
