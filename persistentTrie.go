@@ -100,7 +100,7 @@ func critbytes(first byte, rest ... byte) string {
 
 func assoc(m itrie, key string, val Value) (itrie, int) {
 	if m != nil {
-		return m.assoc(key, val), 0
+		return m.assoc(key, val)
 	}
 	return leaf(key, val), 1
 }
@@ -115,9 +115,9 @@ type itrie interface {
 	hasVal() bool
 	val() Value
 	cloneWithKey(string) itrie
-	cloneWithKeyValue(string, Value) itrie
-	assoc(string, Value) itrie
-	without(string) itrie
+	cloneWithKeyValue(string, Value) (itrie, int)
+	assoc(string, Value) (itrie, int)
+	without(string) (itrie, int)
 	entryAt(string) itrie
 	count() int
 	occupied() int
@@ -145,7 +145,8 @@ func (t *trie) Assoc(key string, val Value) IPersistentMap {
 }
 func (t *trie) Without(key string) IPersistentMap {
 	if t.n != nil {
-		return &trie{t.n.without(key)}
+		n, _ := t.n.without(key)
+		return &trie{n}
 	}
 	return nil
 }
@@ -197,10 +198,10 @@ func (l *leaf_t) clone() *leaf_t {
 func (l *leaf_t) cloneWithKey(key string) itrie {
 	return leaf(key, l.val_)
 }
-func (l *leaf_t) cloneWithKeyValue(key string, val Value) itrie {
-	return leaf(key, val)
+func (l *leaf_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	return leaf(key, val), 0
 }
-func (l *leaf_t) assoc(key string, val Value) itrie {
+func (l *leaf_t) assoc(key string, val Value) (itrie, int) {
 	crit, match := findcrit(key, l.key_)
 	if match {
 		return l.cloneWithKeyValue(key, val)
@@ -209,15 +210,15 @@ func (l *leaf_t) assoc(key string, val Value) itrie {
 	prefix, cb, rest := splitKey(key, crit)
 	_, _cb, _rest := splitKey(l.key_, crit)
 	if crit == len(key) {
-		return bag1(prefix, val, true, _cb, leaf(_rest, l.val_))
+		return bag1(prefix, val, true, _cb, leaf(_rest, l.val_)), 1
 	} else if crit == len(l.key_) {
-		return bag1(prefix, l.val_, true, cb, leaf(rest, val))
+		return bag1(prefix, l.val_, true, cb, leaf(rest, val)), 1
 	}
-	return bag2(prefix, nil, false, cb, _cb, leaf(rest, val), leaf(_rest, l.val_))
+	return bag2(prefix, nil, false, cb, _cb, leaf(rest, val), leaf(_rest, l.val_)), 1
 }
-func (l *leaf_t) without(key string) itrie {
-	if key == l.key_ { return nil }
-	return l
+func (l *leaf_t) without(key string) (itrie, int) {
+	if key == l.key_ { return nil, 1 }
+	return l, 0
 }
 func (l *leaf_t) entryAt(key string) itrie {
 	if key == l.key_ { return l }
@@ -321,13 +322,13 @@ func (b *bag_t) cloneWithKey(key string) itrie {
 	n.key_ = str(key)
 	return n
 }
-func (b *bag_t) cloneWithKeyValue(key string, val Value) itrie {
+func (b *bag_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := b.clone()
 	n.key_ = str(key); n.val_ = val; n.full = true
-	if !b.full { n.count_++ }
-	return n
+	if !b.full { n.count_++; return n, 1 }
+	return n, 0
 }
-func (b *bag_t) with(size, i int, cb byte, key string, val Value) itrie {
+func (b *bag_t) with(size, i int, cb byte, key string, val Value) (itrie, int) {
 	n := new(bag_t)
 	*n = *b
 	n.sub = make([]itrie, size)
@@ -335,12 +336,13 @@ func (b *bag_t) with(size, i int, cb byte, key string, val Value) itrie {
 	copy(n.crit[:i], b.crit[:i])
 	copy(n.sub[:i], b.sub[:i])
 	var o itrie = nil
-	if i < len(b.sub) && b.crit[i] == cb { o = b.sub[i] }
+	var inc int
+	if i < len(b.sub) && b.crit[i] == cb { o = b.sub[i] } else { inc = 1 }
 	n.crit[i] = cb; t, added := assoc(o, key, val); n.sub[i] = t
-	copy(n.crit[i+added:], b.crit[i:])
-	copy(n.sub[i+added:], b.sub[i:])
+	copy(n.crit[i+inc:], b.crit[i:])
+	copy(n.sub[i+inc:], b.sub[i:])
 	n.count_ = b.count_ + added
-	return n
+	return n, added
 }
 func (b *bag_t) find(cb byte) (int, bool) {
 	// Even though it's sorted, since len <= 7, it's almost certainly not worth it to
@@ -352,7 +354,7 @@ func (b *bag_t) find(cb byte) (int, bool) {
 	return len(b.sub), false
 }
 
-func (b *bag_t) assoc(key string, val Value) itrie {
+func (b *bag_t) assoc(key string, val Value) (itrie, int) {
 	crit, match := findcrit(key, b.key_)
 	if match {
 		return b.cloneWithKeyValue(key, val)
@@ -362,7 +364,7 @@ func (b *bag_t) assoc(key string, val Value) itrie {
 	_, _cb, _rest := splitKey(b.key_, crit)	
 	if crit < len(b.key_) {
 		return bag2(prefix, nil, false, cb, _cb,
-			leaf(rest, val), b.cloneWithKey(_rest))
+			leaf(rest, val), b.cloneWithKey(_rest)), 1
 	}
 	i, found := b.find(cb)
 	size := len(b.sub)
@@ -373,12 +375,12 @@ func (b *bag_t) assoc(key string, val Value) itrie {
 			e := b.expanse().with(cb)
 			if spanOK(e, size) {
 				// Prefer a span, even if we're small enough to stay bag
-				return span(b, e, cb, leaf(rest, val))
+				return span(b, e, cb, leaf(rest, val)), 1
 			}
 		}
 		if size > maxBagSize {
 			// Prefer a bitmap
-			return bitmap(b, cb, leaf(rest, val))
+			return bitmap(b, cb, leaf(rest, val)), 1
 		}
 	}
 		
@@ -386,30 +388,34 @@ func (b *bag_t) assoc(key string, val Value) itrie {
 	return b.with(size, i, cb, rest, val)
 }
 
-func (b *bag_t) without(key string) itrie {
+func (b *bag_t) without(key string) (itrie, int) {
 	crit, match := findcrit(key, b.key_)
 	if crit < len(b.key_) {
 		// we don't have the element being removed
-		return b
+		return b, 0
 	}
 
 	if match {
 		if len(b.sub) == 1 {
 			// collapse this node to it's only child.
 			key += string(b.crit[0]) + b.sub[0].key()
-			return b.sub[0].cloneWithKey(key)
+			return b.sub[0].cloneWithKey(key), 1
+		}
+		if !b.full {
+			// Don't have the element
+			return b, 0
 		}
 		n := b.clone();	n.val_ = nil; n.full = false; n.count_--
-		return n
+		return n, 1
 	}
 
 	_, cb, rest := splitKey(key, crit)
 	i, found := b.find(cb)
 	if !found {
 		// we don't have the element being removed
-		return b
+		return b, 0
 	}
-	n := b.sub[i].without(rest)
+	n, less := b.sub[i].without(rest)
 	if n == nil {
 		// We removed a leaf -- shrink our children & possibly turn into a leaf.
 		last := len(b.sub)-1
@@ -417,25 +423,29 @@ func (b *bag_t) without(key string) itrie {
 			if !b.full {
 				panic("we should have a value if we have no sub-tries.")
 			}
-			return leaf(b.key_, b.val_)
+			return leaf(b.key_, b.val_), less
 		} else if last == 1 && !b.full {
 			o := 1 - i
 			key = b.key_ + string(b.crit[o]) + b.sub[o].key()
-			return b.sub[o].cloneWithKey(key)
+			return b.sub[o].cloneWithKey(key), less
 		}
 		e := b.expanse()
 		if last >= minSpanSize {
 			e = b.expanseWithout(cb)
 			if spanOK(e, last) {
 				// We can be a span
-				return spanWithout(b, e, cb)
+				return spanWithout(b, e, cb), less
 			}
 		}
 		// Still a bag.
-		return bagWithout(b, e, cb)
+		return bagWithout(b, e, cb), less
 	}
-	b = b.clone(); b.sub[i] = n; b.count_--
-	return b
+	if less == 0 {
+		if n != b.sub[i] { panic("Shouldn't create a new node without changes.") }
+		return b, 0
+	}
+	b = b.clone(); b.sub[i] = n; b.count_ -= less
+	return b, less
 }
 func (b *bag_t) entryAt(key string) itrie {
 	crit, match := findcrit(key, b.key_)
@@ -484,26 +494,6 @@ func (b *bag_t) debugPrint() {
 	for i, t := range b.sub {
 		fmt.Printf(" cb: %d(%c) %T\n", b.crit[i], b.crit[i], t)
 	}
-}
-
-/*
- sortBag
-
- Implements sort.Interface for bag_t's.
-*/
-type sortBag struct {
-	crit []byte
-	sub []itrie
-}
-func (n sortBag) Len() int {
-	return len(n.sub)
-}
-func (n sortBag) Less(i, j int) bool {
-	return n.crit[i] < n.crit[j]
-}
-func (n sortBag) Swap(i, j int) {
-	n.crit[i], n.crit[j] = n.crit[j], n.crit[i]
-	n.sub[i], n.sub[j] = n.sub[j], n.sub[i]
 }
 
 /*
@@ -568,13 +558,13 @@ func (s *span_t) cloneWithKey(key string) itrie {
 	n.key_ = str(key)
 	return n
 }
-func (s *span_t) cloneWithKeyValue(key string, val Value) itrie {
+func (s *span_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := s.clone()
 	n.key_ = str(key); n.val_ = val; n.full = true
-	if !s.full { n.count_++ }
-	return n
+	if !s.full { n.count_++; return n, 1 }
+	return n, 0
 }
-func (s *span_t) with(e expanse_t, cb byte, key string, val Value) itrie {
+func (s *span_t) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
 	if e.low > s.start { panic("new start must be <= old start") }
 	if int(e.size) < len(s.sub) { panic("new size must be >= old size") }
 	n := new(span_t)
@@ -587,10 +577,10 @@ func (s *span_t) with(e expanse_t, cb byte, key string, val Value) itrie {
 	if i < len(s.sub) { o = s.sub[i] }
 	t, added := assoc(o, key, val); n.sub[cb - n.start] = t
 	n.count_ += added
-	n.occupied_ += uint16(added)
-	return n
+	if o == nil { n.occupied_++ }
+	return n, added
 }
-func (s *span_t) assoc(key string, val Value) itrie {
+func (s *span_t) assoc(key string, val Value) (itrie, int) {
 	crit, match := findcrit(key, s.key_)
 	if match {
 		return s.cloneWithKeyValue(key, val)
@@ -600,7 +590,7 @@ func (s *span_t) assoc(key string, val Value) itrie {
 	_, _cb, _rest := splitKey(s.key_, crit)
 	if crit < len(s.key_) {
 		return bag2(prefix, nil, false, cb, _cb,
-			leaf(rest, val), s.cloneWithKey(_rest))
+			leaf(rest, val), s.cloneWithKey(_rest)), 1
 	}
 	// Update expanse
 	e0 := s.expanse()
@@ -612,10 +602,10 @@ func (s *span_t) assoc(key string, val Value) itrie {
 		if spanOK(e, count) {
 			// We're not a span.
 			if count <= maxBagSize {
-				return bag(s, cb, leaf(rest, val))
+				return bag(s, cb, leaf(rest, val)), 1
 			}
 			// Prefer a bitmap
-			return bitmap(s, cb, leaf(rest, val))
+			return bitmap(s, cb, leaf(rest, val)), 1
 		}
 	}
 
@@ -651,11 +641,11 @@ func (s *span_t) expanseWithout(cb byte) expanse_t {
 	}
 	return e
 }
-func (s *span_t) without(key string) itrie {
+func (s *span_t) without(key string) (itrie, int) {
 	crit, match := findcrit(key, s.key_)
 	if crit < len(s.key_) {
 		// we don't have the element being removed
-		return s
+		return s, 0
 	}
 
 	if match {
@@ -664,26 +654,30 @@ func (s *span_t) without(key string) itrie {
 				// collapse this node to it's only child.
 				if c == nil { continue }
 				key += string(s.start+byte(i)) + c.key()
-				return c.cloneWithKey(key)
+				return c.cloneWithKey(key), 1
 			}
 			panic("should have found a non-nil sub-trie.")
 		}
+		if ! s.full {
+			// don't have the element
+			return s, 0
+		}
 		n := s.clone()
 		n.val_ = nil; n.full = false; n.count_--
-		return n
+		return n, 1
 	}
 
 	_, cb, rest := splitKey(key, crit)
 	if cb < s.start {
 		// we don't have the element being removed
-		return s
+		return s, 0
 	}
 	i := cb - s.start
 	if int(i) >= len(s.sub) {
 		// we don't have the element being removed
-		return s
+		return s, 0
 	}
-	n := s.sub[i].without(rest)
+	n, less := s.sub[i].without(rest)
 	if n == nil {
 		// We removed a leaf -- shrink our children & possibly turn into a bag or leaf.
 		occupied := s.occupied_ - 1
@@ -691,7 +685,7 @@ func (s *span_t) without(key string) itrie {
 		// two cases
 		if occupied == 0 {
 			if !s.full { panic("we should have a value if we have no sub-tries.") }
-			return leaf(s.key_, s.val_)
+			return leaf(s.key_, s.val_), less
 		} 
 		if occupied == 1 && !s.full {
 			o := 0
@@ -700,26 +694,30 @@ func (s *span_t) without(key string) itrie {
 			}
 			if o >= len(s.sub) { panic("We should have another valid sub-trie") }
 			key = s.key_ + string(cb) + s.sub[o].key()
-			return s.sub[o].cloneWithKey(key)
+			return s.sub[o].cloneWithKey(key), less
 		}
 		e := s.expanse()
 		if occupied >= minSpanSize {
 			e = s.expanseWithout(cb)
 			if spanOK(e, int(occupied)) {
 				// We can stay a span
-				return spanWithout(s, e, cb)
+				return spanWithout(s, e, cb), less
 			}
 		}
 		if occupied <= maxBagSize {
 			// We should become a bag
-			return bagWithout(s, e, cb)
+			return bagWithout(s, e, cb), less
 		}
 		// Looks like we're a bitmap
-		return bitmapWithout(s, e, cb)
+		return bitmapWithout(s, e, cb), less
+	}
+	if less == 0 {
+		if n != s.sub[i] { panic("Shouldn't make a new node without changes.") }
+		return s, 0
 	}
 	s = s.clone()
-	s.sub[i] = n; s.count_--
-	return s
+	s.sub[i] = n; s.count_ -= less
+	return s, less
 }
 func (s *span_t) entryAt(key string) itrie {
 	crit, match := findcrit(key, s.key_)
@@ -920,29 +918,30 @@ func (b *bitmap_t) cloneWithKey(key string) itrie {
 	n.key_ = str(key)
 	return n
 }
-func (b *bitmap_t) cloneWithKeyValue(key string, val Value) itrie {
+func (b *bitmap_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := b.clone()
 	n.key_ = str(key); n.val_ = val; n.full = true
-	if !b.full { n.count_++ }
-	return n
+	if !b.full { n.count_++; return n, 1 }
+	return n, 0
 }
-func (b *bitmap_t) with(cb byte, key string, val Value) itrie {
+func (b *bitmap_t) with(cb byte, key string, val Value) (itrie, int) {
 	n := new(bitmap_t)
 	*n = *b
 	w, bit := bitpos(uint(cb))
 	size := len(b.sub)
-	if !b.isset(w, bit) { size++ }
-	n.sub = make([]itrie, size)
+	var inc int
+	if !b.isset(w, bit) { inc = 1 }
+	n.sub = make([]itrie, size+inc)
 	i := b.indexOf(w, bit)
 	copy(n.sub[:i], b.sub[:i])
 	var o itrie
 	if b.isset(w, bit) { o = b.sub[i] }
 	t, added := assoc(o, key, val); n.sub[i] = t; n.setbit(w, bit)
-	copy(n.sub[i+added:], b.sub[i:])
+	copy(n.sub[i+inc:], b.sub[i:])
 	n.count_ = b.count_ + added
-	return n
+	return n, added
 }
-func (b *bitmap_t) assoc(key string, val Value) itrie {
+func (b *bitmap_t) assoc(key string, val Value) (itrie, int) {
 	crit, match := findcrit(key, b.key_)
 	if match {
 		return b.cloneWithKeyValue(key, val)
@@ -952,7 +951,7 @@ func (b *bitmap_t) assoc(key string, val Value) itrie {
 	_, _cb, _rest := splitKey(b.key_, crit)
 	if crit < len(b.key_) {
 		return bag2(prefix, nil, false, cb, _cb,
-			leaf(rest, val), b.cloneWithKey(_rest))
+			leaf(rest, val), b.cloneWithKey(_rest)), 1
 	}
 
 	// Figure out if we stay a bitmap or if we can become a span
@@ -964,17 +963,17 @@ func (b *bitmap_t) assoc(key string, val Value) itrie {
 		count := len(b.sub)
 		if spanOK(e, count+1) {
 			// We can be a span
-			return span(b, e, cb, leaf(rest, val))
+			return span(b, e, cb, leaf(rest, val)), 1
 		}
 	}
 	// still a bitmap
 	return b.with(cb, rest, val)
 }
-func (b *bitmap_t) without(key string) itrie {
+func (b *bitmap_t) without(key string) (itrie, int) {
 	crit, match := findcrit(key, b.key_)
 	if crit < len(b.key_) {
 		// we don't have the element being removed
-		return b
+		return b, 0
 	}
 
 	if match {
@@ -982,35 +981,39 @@ func (b *bitmap_t) without(key string) itrie {
 		// shouldn't happen
 		n := b.clone()
 		n.val_ = nil; n.full = false; n.count_--
-		return n
+		return n, 1
 	}
 
 	_, cb, rest := splitKey(key, crit)
 	w, bit := bitpos(uint(cb))
 	if !b.isset(w, bit) {
 		// we don't have the element being removed
-		return b
+		return b, 0
 	}
 	i := b.indexOf(w, bit)
-	n := b.sub[i].without(rest)
+	n, less := b.sub[i].without(rest)
 	if n == nil {
 		// We removed a leaf -- shrink our children & possibly turn into a bag or span.
 		occupied := b.occupied() - 1
 		e := b.expanseWithout(cb)
 		if spanOK(e, occupied) {
 			// We can be a span
-			return spanWithout(b, e, cb)
+			return spanWithout(b, e, cb), less
 		}
 		if occupied <= maxBagSize {
 			// We should become a bag
-			return bagWithout(b, e, cb)
+			return bagWithout(b, e, cb), less
 		}
 		// We should stay a bitmap
-		return bitmapWithout(b, e, cb)
+		return bitmapWithout(b, e, cb), less
+	}
+	if less == 0 {
+		if n != b.sub[i] { panic("Shouldn't create a new node without changes.") }
+		return b, 0
 	}
 	b = b.clone()
 	b.sub[i] = n; b.clearbit(w, bit); b.count_--
-	return b
+	return b, less
 }
 func (b *bitmap_t) entryAt(key string) itrie {
 	crit, match := findcrit(key, b.key_)
