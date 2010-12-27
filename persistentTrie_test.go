@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"rand"
 	"reflect"
+	"runtime"
 )
 
 func slowcount(bits uint64) int {
@@ -366,7 +367,6 @@ func TestIterTrie(t *testing.T) {
 		}
 		count++
 		i := item.val.(int)
-		fmt.Printf("key: %s, val: %d\n", item.key, item.val.(int))
 		if item.key != keys[i] {
 			t.Errorf("TestIter: (%d) %s != %s", i, item.key, keys[i])
 		}
@@ -386,9 +386,33 @@ func BenchmarkKeys(b *testing.B) {
 	}
 }
 
+var alloc, totalAlloc, mallocs, pauseNs, numGC int64
+
 func BenchmarkAssoc(b *testing.B) {
+	b.StopTimer()
+	alloc = -int64(runtime.MemStats.Alloc)
+	totalAlloc = -int64(runtime.MemStats.TotalAlloc)
+	mallocs = -int64(runtime.MemStats.Mallocs)
+	pauseNs = -int64(runtime.MemStats.PauseNs)
+	numGC = -int64(runtime.MemStats.NumGC)
+	b.StartTimer()
+
 	m := NewTrie()
 	for i := 0; i < b.N; i++ {
 		m = m.Assoc(randomKey(), i)
 	}
+
+	b.StopTimer()
+	alloc += int64(runtime.MemStats.Alloc)
+	totalAlloc += int64(runtime.MemStats.TotalAlloc)
+	mallocs += int64(runtime.MemStats.Mallocs)
+	pauseNs += int64(runtime.MemStats.PauseNs)
+	numGC += int64(runtime.MemStats.NumGC)
+
+	fmt.Printf("MemStats...\n")
+	fmt.Printf("  Alloc........ %12d\n", alloc)
+	fmt.Printf("  TotalAlloc... %12d\n", totalAlloc)
+	fmt.Printf("  Mallocs...... %12d\n", mallocs)
+	fmt.Printf("  PauseNs...... %12d\n", pauseNs)
+	fmt.Printf("  NumGC........ %12d\n", numGC)
 }
