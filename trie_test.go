@@ -1,4 +1,4 @@
-package persistentMap
+package immutable
 
 import (
 	"testing"
@@ -248,14 +248,14 @@ func TestBitmap(t *testing.T) {
 }
 	
 func TestEmptyTrie(t *testing.T) {
-	m := NewTrie()
+	m := Dict()
 	if m.Count() != 0 {
 		t.Errorf("TestEmptyMap: Count (%d) != 0", m.Count())
 	}
 }
 
 func TestAssocTrie(t *testing.T) {
-	m0 := NewTrie()
+	m0 := Dict()
 
 	m1 := m0.Assoc("foo", "bar")
 	if m0.Count() != 0 {
@@ -291,7 +291,7 @@ func TestAssocTrie(t *testing.T) {
 	}
 }
 
-func printItems(m IPersistentMap) {
+func printItems(m IDict) {
 	typ := reflect.Typeof(m)
 	fmt.Printf("Dumping map(type=%s)...\n", typ.String())
 	for item := range m.Iter() {
@@ -300,7 +300,7 @@ func printItems(m IPersistentMap) {
 }
 
 func TestWithoutTrie(t *testing.T) {
-	m := NewTrie()
+	m := Dict()
 	m = m.Assoc("A", 14)
 	m = m.Assoc("K", 13)
 	m = m.Assoc("Q", 12)
@@ -348,7 +348,7 @@ func TestWithoutTrie(t *testing.T) {
 
 func TestIterTrie(t *testing.T) {
 	var keys [256]string
-	m := NewTrie()
+	m := Dict()
 
 	for i := 0; i < 256; i++ {
 		keys[i] = fmt.Sprintf("%02x", 255 - i)
@@ -390,6 +390,7 @@ var alloc, totalAlloc, mallocs, pauseNs, numGC int64
 
 func BenchmarkAssoc(b *testing.B) {
 	b.StopTimer()
+	runtime.GC()
 	alloc = -int64(runtime.MemStats.Alloc)
 	totalAlloc = -int64(runtime.MemStats.TotalAlloc)
 	mallocs = -int64(runtime.MemStats.Mallocs)
@@ -397,7 +398,7 @@ func BenchmarkAssoc(b *testing.B) {
 	numGC = -int64(runtime.MemStats.NumGC)
 	b.StartTimer()
 
-	m := NewTrie()
+	m := Dict()
 	for i := 0; i < b.N; i++ {
 		m = m.Assoc(randomKey(), i)
 	}

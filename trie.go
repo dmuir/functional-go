@@ -1,4 +1,4 @@
-package persistentMap
+package immutable
 
 import (
 	"fmt"
@@ -129,55 +129,56 @@ type itrie interface {
 }
 
 /*
- trie.
+ dict.
 
- This struct implements the IPersistentMap interface via an internal itrie.
+ This struct implements the IDict interface via an internal itrie.
 */
-type trie struct {
-	n itrie
+type dict struct {
+	t itrie
 }
-func (t *trie) debugPrint(prefix string) {
-	if t.n != nil { t.n.debugPrint(prefix) } else { fmt.Print("%sempty\n", prefix) }
+func (d dict) Assoc(key string, val Value) IDict {
+	t, _ := assoc(d.t, key, val)
+	return dict{t}
 }
-func (t *trie) Assoc(key string, val Value) IPersistentMap {
-	n, _ := assoc(t.n, key, val)
-	return &trie{n}
-}
-func (t *trie) Without(key string) IPersistentMap {
-	if t.n != nil {
-		n, _ := t.n.without(key)
-		return &trie{n}
+func (d dict) Without(key string) IDict {
+	if d.t != nil {
+		t, _ := d.t.without(key)
+		return dict{t}
 	}
 	return nil
 }
-func (t *trie) Contains(key string) bool { 
-	if t.n != nil {
-		e := t.n.entryAt(key)
+func (d dict) Contains(key string) bool { 
+	if d.t != nil {
+		e := d.t.entryAt(key)
 		return e != nil
 	}
 	return false
 }
-func (t *trie) ValueAt(key string) Value {
-	if t.n != nil {
-		e := t.n.entryAt(key)
+func (d dict) ValueAt(key string) Value {
+	if d.t != nil {
+		e := d.t.entryAt(key)
 		if e != nil { return e.val() }
 	}
 	panic(fmt.Sprintf("no value at: %s", key))
 }
-func (t *trie) Count() int {
-	if t.n != nil {
-		return t.n.count()
+func (d dict) Count() int {
+	if d.t != nil {
+		return d.t.count()
 	}
 	return 0
 }
-func (t *trie) Iter() chan Item {
+func (d dict) Iter() chan Item {
 	ch := make(chan Item)
-	if t.n != nil {
-		go t.n.inorder("", ch)
+	if d.t != nil {
+		go d.t.inorder("", ch)
 	} else {
 		go close(ch)
 	}
 	return ch
+}
+
+func Dict() IDict {
+	return dict{nil}
 }
 
 /*
@@ -1097,11 +1098,4 @@ func (b *bitmap_t) debugPrint(prefix string) {
 	}
 	b.withsubs(0, 256, pr)
 }
-
-
-
-func NewTrie() IPersistentMap {
-	return new(trie)
-}
-
 

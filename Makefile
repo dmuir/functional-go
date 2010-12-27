@@ -1,8 +1,8 @@
 include $(GOROOT)/src/Make.inc
 
-TARG=persistentMap
+TARG=immutable
 GOFILES=\
-	persistentMap.go\
-	persistentTrie.go\
+	dict.go\
+	trie.go\
 
 include $(GOROOT)/src/Make.pkg
