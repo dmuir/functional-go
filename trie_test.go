@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"rand"
 	"reflect"
-	"runtime"
 )
 
 func slowcount(bits uint64) int {
@@ -404,41 +403,21 @@ func TestRandomAssoc(t *testing.T) {
 	}
 }
 	
-
 func BenchmarkKeys(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = randomKey()
 	}
 }
 
-var alloc, totalAlloc, mallocs, pauseNs, numGC int64
-
+func BenchmarkBuiltinMap(b *testing.B) {
+	m := map[string]interface{}{}
+	for i := 0; i < b.N; i++ {
+		m[randomKey()] = i
+	}
+}
 func BenchmarkAssoc(b *testing.B) {
-	b.StopTimer()
-	runtime.GC()
-	alloc = -int64(runtime.MemStats.Alloc)
-	totalAlloc = -int64(runtime.MemStats.TotalAlloc)
-	mallocs = -int64(runtime.MemStats.Mallocs)
-	pauseNs = -int64(runtime.MemStats.PauseNs)
-	numGC = -int64(runtime.MemStats.NumGC)
-	b.StartTimer()
-
 	m := Dict()
 	for i := 0; i < b.N; i++ {
 		m = m.Assoc(randomKey(), i)
 	}
-
-	b.StopTimer()
-	alloc += int64(runtime.MemStats.Alloc)
-	totalAlloc += int64(runtime.MemStats.TotalAlloc)
-	mallocs += int64(runtime.MemStats.Mallocs)
-	pauseNs += int64(runtime.MemStats.PauseNs)
-	numGC += int64(runtime.MemStats.NumGC)
-
-	fmt.Printf("MemStats...\n")
-	fmt.Printf("  Alloc........ %12d\n", alloc)
-	fmt.Printf("  TotalAlloc... %12d\n", totalAlloc)
-	fmt.Printf("  Mallocs...... %12d\n", mallocs)
-	fmt.Printf("  PauseNs...... %12d\n", pauseNs)
-	fmt.Printf("  NumGC........ %12d\n", numGC)
 }
