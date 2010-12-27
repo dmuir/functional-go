@@ -733,7 +733,7 @@ func (s *span_t) entryAt(key string) itrie {
 	if crit >= len(key) { return nil }
 	_, cb, rest := splitKey(key, crit)
 	if cb >= s.start && int(cb) < (int(s.start)+len(s.sub)) {
-		i := cb + s.start
+		i := cb - s.start
 		if s.sub[i] != nil { return s.sub[i].entryAt(rest) }
 	}
 	return nil

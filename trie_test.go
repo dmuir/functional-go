@@ -380,6 +380,31 @@ func randomKey() string {
 	return fmt.Sprintf("%x", rand.Int63())
 }
 
+func TestRandomAssoc(t *testing.T) {
+	d := Dict()
+	m := map[string]int{}
+
+	for i := 0; i < 100000; i++ {
+		key := randomKey()
+		d = d.Assoc(key, i)
+		m[key] = i
+	}
+	if d.Count() != len(m) {
+		t.Errorf("Expected Count == %d, got %d", len(m), d.Count())
+	}
+
+	for k, v := range m {
+		if !d.Contains(k) {
+			t.Errorf("%s not in dict.", k)
+			continue
+		}
+		if vt := d.ValueAt(k).(int); vt != v {
+			t.Errorf("Expected %d at %s, got %d", v, k, vt)
+		}
+	}
+}
+	
+
 func BenchmarkKeys(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = randomKey()
