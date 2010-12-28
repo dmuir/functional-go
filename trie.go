@@ -117,7 +117,9 @@ type itrie interface {
 	cloneWithKey(string) itrie
 	cloneWithKeyValue(string, Value) (itrie, int)
 	assoc(string, Value) (itrie, int)
+	grow(string, byte, string, Value) (itrie, int)
 	without(string) (itrie, int)
+	withoutValue() (itrie, int)
 	entryAt(string) itrie
 	count() int
 	occupied() int
@@ -182,6 +184,28 @@ func Dict() IDict {
 }
 
 /*
+ Functions which capture common behavior.
+*/
+func doAssoc(t itrie, key string, val Value) (itrie, int) {
+	crit, match := findcrit(key, t.key())
+	if match {
+		return t.cloneWithKeyValue(key, val)
+	}
+
+	prefix, cb, rest := splitKey(key, crit)
+	_, _cb, _rest := splitKey(t.key(), crit)
+
+	if crit < len(t.key()) {
+		if crit == len(key) {
+			return bag1(prefix, val, true, _cb, t.cloneWithKey(_rest)), 1
+		}
+		return bag2(prefix, nil, false, cb, _cb,
+			leaf(rest, val), t.cloneWithKey(_rest)), 1
+	}
+	return t.grow(prefix, cb, rest, val)
+}
+
+/*
  leaf_t
 
  Internal node that contains only a key and a value.
@@ -202,20 +226,14 @@ func (l *leaf_t) cloneWithKey(key string) itrie {
 func (l *leaf_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	return leaf(key, val), 0
 }
+func (l *leaf_t) withoutValue() (itrie, int) {
+	panic("Can't have a leaf without a value")
+}
+func (l *leaf_t) grow(prefix string, cb byte, rest string, val Value) (itrie, int) {
+	return bag1(prefix, l.val_, true, cb, leaf(rest, val)), 1
+}
 func (l *leaf_t) assoc(key string, val Value) (itrie, int) {
-	crit, match := findcrit(key, l.key_)
-	if match {
-		return l.cloneWithKeyValue(key, val)
-	}
-
-	prefix, cb, rest := splitKey(key, crit)
-	_, _cb, _rest := splitKey(l.key_, crit)
-	if crit == len(key) {
-		return bag1(prefix, val, true, _cb, leaf(_rest, l.val_)), 1
-	} else if crit == len(l.key_) {
-		return bag1(prefix, l.val_, true, cb, leaf(rest, val)), 1
-	}
-	return bag2(prefix, nil, false, cb, _cb, leaf(rest, val), leaf(_rest, l.val_)), 1
+	return doAssoc(l, key, val)
 }
 func (l *leaf_t) without(key string) (itrie, int) {
 	if key == l.key_ { return nil, 1 }
@@ -329,6 +347,14 @@ func (b *bag_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	if !b.full { n.count_++; return n, 1 }
 	return n, 0
 }
+func (b *bag_t) withoutValue() (itrie, int) {
+	if b.full {
+		n := b.clone()
+		n.val_ = nil; n.full = false; n.count_--
+		return n, 1
+	}
+	return b, 0
+}	
 func (b *bag_t) with(size, i int, cb byte, key string, val Value) (itrie, int) {
 	n := new(bag_t)
 	*n = *b
@@ -361,19 +387,7 @@ func (b *bag_t) find(cb byte) (int, bool) {
 	}
 	return len(b.sub), false
 }
-
-func (b *bag_t) assoc(key string, val Value) (itrie, int) {
-	crit, match := findcrit(key, b.key_)
-	if match {
-		return b.cloneWithKeyValue(key, val)
-	}
-	
-	prefix, cb, rest := splitKey(key, crit)
-	_, _cb, _rest := splitKey(b.key_, crit)	
-	if crit < len(b.key_) {
-		return bag2(prefix, nil, false, cb, _cb,
-			leaf(rest, val), b.cloneWithKey(_rest)), 1
-	}
+func (b *bag_t) grow(prefix string, cb byte, rest string, val Value) (itrie, int) {
 	i, found := b.find(cb)
 	size := len(b.sub)
 	if !found {
@@ -391,9 +405,12 @@ func (b *bag_t) assoc(key string, val Value) (itrie, int) {
 			return bitmap(b, cb, leaf(rest, val)), 1
 		}
 	}
-		
+	
 	// We still fit in a bag
 	return b.with(size, i, cb, rest, val)
+}
+func (b *bag_t) assoc(key string, val Value) (itrie, int) {
+	return doAssoc(b, key, val)
 }
 
 func (b *bag_t) without(key string) (itrie, int) {
@@ -409,12 +426,7 @@ func (b *bag_t) without(key string) (itrie, int) {
 			key += string(b.crit[0]) + b.sub[0].key()
 			return b.sub[0].cloneWithKey(key), 1
 		}
-		if !b.full {
-			// Don't have the element
-			return b, 0
-		}
-		n := b.clone();	n.val_ = nil; n.full = false; n.count_--
-		return n, 1
+		return b.withoutValue()
 	}
 
 	_, cb, rest := splitKey(key, crit)
@@ -425,7 +437,7 @@ func (b *bag_t) without(key string) (itrie, int) {
 	}
 	n, less := b.sub[i].without(rest)
 	if n == nil {
-		// We removed a leaf -- shrink our children & possibly turn into a leaf.
+		// We removed a leaf -- shrink our sub-tries & possibly turn into a leaf.
 		last := len(b.sub)-1
 		if last == 0 {
 			if !b.full {
@@ -573,6 +585,14 @@ func (s *span_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	if !s.full { n.count_++; return n, 1 }
 	return n, 0
 }
+func (s *span_t) withoutValue() (itrie, int) {
+	if s.full {
+		n := s.clone()
+		n.val_ = nil; n.full = false; n.count_--
+		return n, 1
+	} 
+	return s, 0
+}
 func (s *span_t) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
 	if e.low > s.start { panic("new start must be <= old start") }
 	if int(e.size) < len(s.sub) { panic("new size must be >= old size") }
@@ -588,22 +608,11 @@ func (s *span_t) with(e expanse_t, cb byte, key string, val Value) (itrie, int) 
 	if o == nil { n.occupied_++ }
 	return n, added
 }
-func (s *span_t) assoc(key string, val Value) (itrie, int) {
-	crit, match := findcrit(key, s.key_)
-	if match {
-		return s.cloneWithKeyValue(key, val)
-	}
-
-	prefix, cb, rest := splitKey(key, crit)
-	_, _cb, _rest := splitKey(s.key_, crit)
-	if crit < len(s.key_) {
-		return bag2(prefix, nil, false, cb, _cb,
-			leaf(rest, val), s.cloneWithKey(_rest)), 1
-	}
+func (s *span_t) grow(prefix string, cb byte, rest string, val Value) (itrie, int) {
 	// Update expanse
 	e0 := s.expanse()
 	e := e0.with(cb)
-
+	
 	if e.size > e0.size {
 		// Figure out if we're a span, a bag, or a bitmap.
 		count := int(s.occupied_)+1
@@ -616,10 +625,13 @@ func (s *span_t) assoc(key string, val Value) (itrie, int) {
 			return bitmap(s, cb, leaf(rest, val)), 1
 		}
 	}
-
+	
 	// Prefer a span -- the code below handles the case of adding a new child, or
 	// overwriting an existing one.
 	return s.with(e, cb, rest, val)
+}
+func (s *span_t) assoc(key string, val Value) (itrie, int) {
+	return doAssoc(s, key, val)
 }
 func (s *span_t) firstAfter(i int) byte {
 	i++
@@ -666,13 +678,7 @@ func (s *span_t) without(key string) (itrie, int) {
 			}
 			panic("should have found a non-nil sub-trie.")
 		}
-		if ! s.full {
-			// don't have the element
-			return s, 0
-		}
-		n := s.clone()
-		n.val_ = nil; n.full = false; n.count_--
-		return n, 1
+		return s.withoutValue()
 	}
 
 	_, cb, rest := splitKey(key, crit)
@@ -933,6 +939,14 @@ func (b *bitmap_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	if !b.full { n.count_++; return n, 1 }
 	return n, 0
 }
+func (b *bitmap_t) withoutValue() (itrie, int) {
+	if b.full {
+		n := b.clone()
+		n.val_ = nil; n.full = false; n.count_--
+		return n, 1
+	}
+	return b, 0
+}
 func (b *bitmap_t) with(cb byte, key string, val Value) (itrie, int) {
 	n := new(bitmap_t)
 	*n = *b
@@ -953,19 +967,7 @@ func (b *bitmap_t) with(cb byte, key string, val Value) (itrie, int) {
 	n.count_ = b.count_ + added
 	return n, added
 }
-func (b *bitmap_t) assoc(key string, val Value) (itrie, int) {
-	crit, match := findcrit(key, b.key_)
-	if match {
-		return b.cloneWithKeyValue(key, val)
-	}
-
-	prefix, cb, rest := splitKey(key, crit)
-	_, _cb, _rest := splitKey(b.key_, crit)
-	if crit < len(b.key_) {
-		return bag2(prefix, nil, false, cb, _cb,
-			leaf(rest, val), b.cloneWithKey(_rest)), 1
-	}
-
+func (b *bitmap_t) grow(prefix string, cb byte, rest string, val Value) (itrie, int) {
 	// Figure out if we stay a bitmap or if we can become a span
 	// we know we're too big to be a bag
 	w, bit := bitpos(uint(cb))
@@ -981,6 +983,9 @@ func (b *bitmap_t) assoc(key string, val Value) (itrie, int) {
 	// still a bitmap
 	return b.with(cb, rest, val)
 }
+func (b *bitmap_t) assoc(key string, val Value) (itrie, int) {
+	return doAssoc(b, key, val)
+}
 func (b *bitmap_t) without(key string) (itrie, int) {
 	crit, match := findcrit(key, b.key_)
 	if crit < len(b.key_) {
@@ -991,9 +996,7 @@ func (b *bitmap_t) without(key string) (itrie, int) {
 	if match {
 		// we won't even check for the case of only 1 child in a bitmap -- it just
 		// shouldn't happen
-		n := b.clone()
-		n.val_ = nil; n.full = false; n.count_--
-		return n, 1
+		return b.withoutValue()
 	}
 
 	_, cb, rest := splitKey(key, crit)

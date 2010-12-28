@@ -409,12 +409,6 @@ func BenchmarkKeys(b *testing.B) {
 	}
 }
 
-func BenchmarkBuiltinMap(b *testing.B) {
-	m := map[string]interface{}{}
-	for i := 0; i < b.N; i++ {
-		m[randomKey()] = i
-	}
-}
 func BenchmarkAssoc(b *testing.B) {
 	m := Dict()
 	for i := 0; i < b.N; i++ {
