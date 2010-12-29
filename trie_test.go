@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"rand"
 	"reflect"
+	"runtime"
 )
 
 func slowcount(bits uint64) int {
@@ -166,7 +167,7 @@ func checkTrie(b itrie, exoccupied int, exp expanse_t, check int, t *testing.T) 
 	}
 }
 		
-func testBag(t *testing.T) *bag_t {
+func testBag(t *testing.T) itrie {
 	check := 1
 	b := bag2("", nil, false, 'f', 'b', leaf("oo", 1), leaf("ar", 2))
 	checkTrie(b, 2, expanse('f', 'b'), check, t); check++
@@ -358,7 +359,32 @@ func TestIterTrie(t *testing.T) {
 		t.Errorf("TestIter: m.Count() (%d) != 256", m.Count())
 	}
 
+	for i, k := range keys {
+		if !m.Contains(k) {
+			t.Errorf("TestIter: m doesn't contain %s", k)
+		} else {
+			val := m.ValueAt(k)
+			if val.(int) != i {
+				t.Errorf("TestIter: m@%s(%d) != %d", k, val.(int), i)
+			}
+		}
+	}
 	count := 0
+	m.Foreach(func(key string, val Value) {
+		i := val.(int)
+		if i != 255 - count {
+			fmt.Printf("skipped...\n")
+			count = 255 - val.(int)
+		}
+		count++
+		if key != keys[i] {
+			t.Errorf("TestIter: (%d) %s != %s", i, key, keys[i])
+		}
+	})
+	if count != m.Count() {
+		t.Errorf("TestIter: only iterated %d of %d items via Foreach.", count, m.Count())
+	}
+	count = 0
 	for item := range m.Iter() {
 		if item.val.(int) != 255 - count {
 			fmt.Printf("skipped...\n")
@@ -371,7 +397,7 @@ func TestIterTrie(t *testing.T) {
 		}
 	}
 	if count != m.Count() {
-		t.Errorf("TestIter: only iterated %d of %d items.", count, m.Count())
+		t.Errorf("TestIter: only iterated %d of %d items via Iter.", count, m.Count())
 	}
 }
 		
@@ -410,6 +436,9 @@ func BenchmarkKeys(b *testing.B) {
 }
 
 func BenchmarkAssoc(b *testing.B) {
+	b.StopTimer()
+	runtime.GC()
+	b.StartTimer()
 	m := Dict()
 	for i := 0; i < b.N; i++ {
 		m = m.Assoc(randomKey(), i)

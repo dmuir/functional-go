@@ -18,5 +18,6 @@ type IDict interface {
 	Contains(key string) bool
 	ValueAt(key string) Value
 	Count() int
+	Foreach(func(string, Value))
 	Iter() chan Item
 }

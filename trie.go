@@ -66,7 +66,7 @@ func spanOK(e expanse_t, count int) bool {
  finds the location of the critical byte for 2 strings -- this is the first byte at which the
  strings differ.  The second return value indicates whether the strings match exactly.
 */
-func findcrit(a string, b string) (int, bool) {
+func findcb(a string, b string) (int, bool) {
 	la := len(a)
 	lb := len(b)
 	l := min(la, lb)
@@ -98,11 +98,33 @@ func critbytes(first byte, rest ... byte) string {
 }
 
 
-func assoc(m itrie, key string, val Value) (itrie, int) {
-	if m != nil {
-		return m.assoc(key, val)
+func assoc(t itrie, key string, val Value) (itrie, int) {
+	if t != nil {
+		crit, match := findcb(key, t.key())
+		if match {
+			return t.cloneWithKeyValue(key, val)
+		}
+		
+		prefix, cb, rest := splitKey(key, crit)
+		_, _cb, _rest := splitKey(t.key(), crit)
+
+		if crit < len(t.key()) {
+			if crit == len(key) {
+				return bag1(prefix, val, true, _cb, t.cloneWithKey(_rest)), 1
+			}
+			return bag2(prefix, nil, false, cb, _cb,
+				leaf(rest, val), t.cloneWithKey(_rest)), 1
+		}
+		return t.assoc(t, prefix, cb, rest, val)
 	}
 	return leaf(key, val), 1
+}
+
+func without(t itrie, key string) (itrie, int) {
+	if t != nil {
+		return t.without(t, key)
+	}
+	return nil, 0
 }
 
 /*
@@ -114,20 +136,19 @@ type itrie interface {
 	key() string
 	hasVal() bool
 	val() Value
+	modify(incr, i int, t itrie) itrie
 	cloneWithKey(string) itrie
 	cloneWithKeyValue(string, Value) (itrie, int)
-	assoc(string, Value) (itrie, int)
-	grow(string, byte, string, Value) (itrie, int)
-	without(string) (itrie, int)
+	assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int)
+	without(t itrie, key string) (itrie, int)
 	withoutValue() (itrie, int)
 	entryAt(string) itrie
 	count() int
 	occupied() int
 	expanse() expanse_t
 	expanseWithout(byte) expanse_t
-	inorder(string, chan Item)
+	foreach(string, func(string, Value))
 	withsubs(start uint, end uint, fn func (byte, itrie))
-	debugPrint(string)
 }
 
 /*
@@ -143,11 +164,8 @@ func (d dict) Assoc(key string, val Value) IDict {
 	return dict{t}
 }
 func (d dict) Without(key string) IDict {
-	if d.t != nil {
-		t, _ := d.t.without(key)
-		return dict{t}
-	}
-	return nil
+	t, _ := without(d.t, key)
+	return dict{t}
 }
 func (d dict) Contains(key string) bool { 
 	if d.t != nil {
@@ -169,10 +187,21 @@ func (d dict) Count() int {
 	}
 	return 0
 }
+func (d dict) Foreach(fn func(string, Value)) {
+	if d.t != nil {
+		d.t.foreach("", fn)
+	}
+}
 func (d dict) Iter() chan Item {
 	ch := make(chan Item)
 	if d.t != nil {
-		go d.t.inorder("", ch)
+		emit := func(key string, val Value) { ch <- Item{key, val} }
+				
+		helper := func(t itrie, emit func(string, Value)) {
+			t.foreach("", emit)
+			close(ch) 
+		}
+		go helper(d.t, emit)
 	} else {
 		go close(ch)
 	}
@@ -186,76 +215,105 @@ func Dict() IDict {
 /*
  Functions which capture common behavior.
 */
-func doAssoc(t itrie, key string, val Value) (itrie, int) {
-	crit, match := findcrit(key, t.key())
-	if match {
-		return t.cloneWithKeyValue(key, val)
-	}
-
-	prefix, cb, rest := splitKey(key, crit)
-	_, _cb, _rest := splitKey(t.key(), crit)
-
-	if crit < len(t.key()) {
-		if crit == len(key) {
-			return bag1(prefix, val, true, _cb, t.cloneWithKey(_rest)), 1
-		}
-		return bag2(prefix, nil, false, cb, _cb,
-			leaf(rest, val), t.cloneWithKey(_rest)), 1
-	}
-	return t.grow(prefix, cb, rest, val)
+type ientry interface {
+	key() string
+	val() Value
+	hasVal() bool
 }
+
+type entry_ struct {}
+func (e entry_) key() string { return "" }
+func (e entry_) val() Value { return nil }
+func (e entry_) hasVal() bool { return false }
+
+type entryK struct {
+	key_ string
+}
+func (e entryK) key() string { return e.key_ }
+func (e entryK) val() Value { return nil }
+func (e entryK) hasVal() bool { return false }
+
+type entryV struct {
+	val_ Value
+}
+func (e entryV) key() string { return "" }
+func (e entryV) val() Value { return e.val_ }
+func (e entryV) hasVal() bool { return true }
+
+type entryKV struct {
+	key_ string
+	val_ Value
+}
+func (e entryKV) key() string { return e.key_ }
+func (e entryKV) val() Value { return e.val_ }
+func (e entryKV) hasVal() bool { return true }
 
 /*
  leaf_t
 
  Internal node that contains only a key and a value.
 */
-type leaf_t struct {
+type leafV struct {
+	entryV
+}
+type leafKV struct {
 	key_ string
-	val_ Value
+	leafV
 }
-func leaf(key string, val Value) *leaf_t {
-	return &leaf_t{str(key), val}
+
+func leaf(key string, val Value) itrie {
+	if len(key) > 0 {
+		l := new(leafKV)
+		l.key_ = key; l.val_ = val
+		return l
+	}
+	l := new(leafV)
+	l.val_ = val
+	return l
 }
-func (l *leaf_t) clone() *leaf_t {
-	return leaf(l.key_, l.val_)
+func (l *leafV) modify(incr, i int, sub itrie) itrie {
+	panic("can't modify a leaf in this way")
 }
-func (l *leaf_t) cloneWithKey(key string) itrie {
+func (l *leafV) cloneWithKey(key string) itrie {
 	return leaf(key, l.val_)
 }
-func (l *leaf_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
+func (l *leafV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	return leaf(key, val), 0
 }
-func (l *leaf_t) withoutValue() (itrie, int) {
+func (l *leafV) withoutValue() (itrie, int) {
 	panic("Can't have a leaf without a value")
 }
-func (l *leaf_t) grow(prefix string, cb byte, rest string, val Value) (itrie, int) {
-	return bag1(prefix, l.val_, true, cb, leaf(rest, val)), 1
+func (l *leafV) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
+	return bag1(prefix, l.val(), true, cb, leaf(rest, val)), 1
 }
-func (l *leaf_t) assoc(key string, val Value) (itrie, int) {
-	return doAssoc(l, key, val)
+func (l *leafV) without(t itrie, key string) (itrie, int) {
+	if len(key) == 0 { return nil, 1 }
+	return t, 0
 }
-func (l *leaf_t) without(key string) (itrie, int) {
+func (l *leafKV) without(t itrie, key string) (itrie, int) {
 	if key == l.key_ { return nil, 1 }
-	return l, 0
+	return t, 0
 }
-func (l *leaf_t) entryAt(key string) itrie {
+func (l *leafV) entryAt(key string) itrie {
+	if len(key) == 0 { return l }
+	return nil
+}
+func (l *leafKV) entryAt(key string) itrie {
 	if key == l.key_ { return l }
 	return nil
 }
-func (l *leaf_t) inorder(prefix string, ch chan Item) {
-	ch <- Item{prefix + l.key_, l.val_}
-	if len(prefix) == 0 { close(ch) }
+func (l *leafV) foreach(prefix string, f func(string, Value)) {
+	f(prefix, l.val_)
 }
-func (l *leaf_t) withsubs(start uint, end uint, fn func(byte, itrie)) {}
-func (l *leaf_t) key() string { return l.key_ }
-func (l *leaf_t) hasVal() bool { return true }
-func (l *leaf_t) val() Value { return l.val_ }
-func (l *leaf_t) count() int { return 1 }
-func (l *leaf_t) occupied() int { return 0 }
-func (l *leaf_t) expanse() expanse_t { return expanse0() }
-func (l *leaf_t) expanseWithout(byte) expanse_t { return expanse0() }
-func (l *leaf_t) debugPrint(prefix string) { fmt.Printf("%sleaf -- key: %s\n", prefix, l.key_) }
+func (l *leafKV) foreach(prefix string, f func(string, Value)) {
+	f(prefix + l.key_, l.val_)
+}
+func (l *leafV) withsubs(start uint, end uint, fn func(byte, itrie)) {}
+func (l *leafKV) key() string { return l.key_ }
+func (l *leafV) count() int { return 1 }
+func (l *leafV) occupied() int { return 0 }
+func (l *leafV) expanse() expanse_t { return expanse0() }
+func (l *leafV) expanseWithout(byte) expanse_t { return expanse0() }
 
 
 /*
@@ -265,129 +323,289 @@ func (l *leaf_t) debugPrint(prefix string) { fmt.Printf("%sleaf -- key: %s\n", p
  When a bag has 4 or more elements, it may be promoted to a span.  If it has 8 or more elements,
  it will be promoted to a span or a bitmap.
 */
-type bag_t struct {
-	key_ string
-	val_ Value
+type bag_ struct {
+	entry_
+	cb [maxBagSize]byte
 	count_ int
-	full bool
-	crit [maxBagSize]byte
 	sub []itrie
 }
-func bag1(key string, val Value, full bool, cb byte, sub itrie) *bag_t {
-	b := new(bag_t)
-	b.key_ = str(key); b.val_ = val; b.full = full
-	if full { b.count_++ }
-	b.crit[0] = cb
+type bagK struct {
+	entryK
+	bag_
+}
+type bagV struct {
+	entryV
+	bag_
+}
+type bagKV struct {
+	entryKV
+	bag_
+}
+func (b *bag_) printCBs(prefix string) {
+	fmt.Printf("%s: bag.cb = [", prefix)
+	for i := 0; i < len(b.sub); i++ {
+		fmt.Printf(" %d(%c) ", b.cb[i], b.cb[i])
+	}
+	fmt.Printf("]\n")
+}
+func (b *bag_) init1(cb byte, sub itrie) {
+	b.cb[0] = cb
 	b.sub = make([]itrie, 1)
 	b.sub[0] = sub
 	b.count_ += sub.count()
+}	
+func bag1(key string, val Value, full bool, cb byte, sub itrie) itrie {
+	if len(key) > 0 {
+		if full {
+			b := new(bagKV)
+			b.key_ = str(key); b.val_ = val; b.count_ = 1
+			b.init1(cb, sub)
+			return b
+		}
+		b := new(bagK)
+		b.key_ = str(key)
+		b.init1(cb, sub)
+		return b
+	}
+	if full {
+		b := new(bagV)
+		b.val_ = val; b.count_ = 1
+		b.init1(cb, sub)
+		return b
+	}
+	b := new(bag_)
+	b.init1(cb, sub)
 	return b
 }
-func bag2(key string, val Value, full bool, cb0, cb1 byte, sub0, sub1 itrie) *bag_t {
-	b := new(bag_t)
-	b.key_ = str(key); b.val_ = val; b.full = full
-	if full { b.count_++ }
+func (b *bag_) init2(cb0, cb1 byte, sub0, sub1 itrie) {
 	if cb1 < cb0 { cb0, cb1 = cb1, cb0; sub0, sub1 = sub1, sub0 }
-	b.crit[0] = cb0; b.crit[1] = cb1
+	b.cb[0] = cb0; b.cb[1] = cb1 
 	b.sub = make([]itrie, 2)
 	b.sub[0] = sub0; b.sub[1] = sub1
 	b.count_ += sub0.count() + sub1.count()
+}
+func bag2(key string, val Value, full bool, cb0, cb1 byte, sub0, sub1 itrie) itrie {
+	if len(key) > 0 {
+		if full {
+			b := new(bagKV)
+			b.key_ = str(key); b.val_ = val; b.count_ = 1
+			b.init2(cb0, cb1, sub0, sub1)
+			return b
+		}
+		b := new(bagK)
+		b.key_ = str(key)
+		b.init2(cb0, cb1, sub0, sub1)
+		return b
+	}
+	if full {
+		b := new(bagV)
+		b.val_ = val; b.count_ = 1
+		b.init2(cb0, cb1, sub0, sub1)
+		return b
+	}
+	b := new(bag_)
+	b.init2(cb0, cb1, sub0, sub1)
 	return b
 }
-func makeBag(size int, key string, val Value, full bool) *bag_t {
-	b := new(bag_t)
-	b.key_ = key; b.val_ = val; b.full = full
-	b.sub = make([]itrie, size)
-	return b
+func (b *bag_) fillWith(t itrie, cb byte, l itrie) {
+	b.sub = make([]itrie, t.occupied()+1)
+	index := 0
+	add := func(cb byte, t itrie) {	b.sub[index] = t; b.cb[index] = cb; index++ }
+	t.withsubs(0, uint(cb), add)
+	add(cb, l)
+	t.withsubs(uint(cb)+1, 256, add)
+	b.count_ = t.count() + 1
 }
 /*
  Constructs a new bag with the contents of t and l, where l is always a leaf.  It is known
  that l starts a new sub-trie -- t does not have a sub-trie at critical byte cb.
 */
-func bag(t itrie, cb byte, l *leaf_t) *bag_t {
-	b := makeBag(t.occupied()+1, t.key(), t.val(), t.hasVal())
-	index := 0
-	add := func(cb byte, t itrie) {	
-		b.sub[index] = t; b.crit[index] = cb; index++
+func bag(t itrie, cb byte, l itrie) itrie {
+	if len(t.key()) > 0 {
+		if t.hasVal() {
+			b := new(bagKV)
+			b.key_ = t.key(); b.val_ = t.val()
+			b.fillWith(t, cb, l)
+			return b
+		}
+		b := new(bagK)
+		b.key_ = t.key()
+		b.fillWith(t, cb, l)
+		return b
 	}
-	t.withsubs(0, uint(cb), add)
-	add(cb, l)
-	t.withsubs(uint(cb)+1, 256, add)
-	b.count_ = t.count() + 1
+	if t.hasVal() {
+		b := new(bagV)
+		b.val_ = t.val()
+		b.fillWith(t, cb, l)
+		return b
+	}
+	b := new(bag_)
+	b.fillWith(t, cb, l)
 	return b
 }
 /*
  Constructs a new bag with the contents of t, minus the sub-trie at critical bit cb.  It
  is expected that any sub-trie at cb is a leaf.
 */
-func bagWithout(t itrie, e expanse_t, without byte) *bag_t {
-	b := makeBag(t.occupied() - 1, t.key(), t.val(), t.hasVal())
+func (b *bag_) fillWithout(t itrie, e expanse_t, without byte) {
+	b.sub = make([]itrie, t.occupied()-1)
 	index := 0
-	add := func(cb byte, t itrie) { b.sub[index] = t; b.crit[index] = cb; index++ }
+	add := func(cb byte, t itrie) { b.sub[index] = t; b.cb[index] = cb; index++ }
 	t.withsubs(uint(e.low), uint(without), add)
 	t.withsubs(uint(without+1), uint(e.high)+1, add)
 	b.count_ = t.count() - 1
+}
+func bagWithout(t itrie, e expanse_t, without byte) itrie {
+	if len(t.key()) > 0 {
+		if t.hasVal() {
+			b := new(bagKV)
+			b.key_ = t.key(); b.val_ = t.val()
+			b.fillWithout(t, e, without)
+			return b
+		}
+		b := new(bagK)
+		b.key_ = t.key()
+		b.fillWithout(t, e, without)
+		return b
+	}
+	if t.hasVal() {
+		b := new(bagV)
+		b.val_ = t.val()
+		b.fillWithout(t, e, without)
+		return b
+	}
+	b := new(bag_)
+	b.fillWithout(t, e, without)
 	return b
 }
-func (b *bag_t) clone() *bag_t {
-	n := new(bag_t)
-	*n = *b
-	n.sub = make([]itrie, len(b.sub))
-	copy(n.sub, b.sub)
+func (b *bag_) copy(t *bag_) {
+	b.count_ = t.count_
+	copy(b.cb[:len(t.sub)], t.cb[:len(t.sub)])
+	b.sub = make([]itrie, len(t.sub))
+	copy(b.sub, t.sub)
+}
+func (b *bag_) modify(incr, i int, sub itrie) itrie {
+	n := new(bag_)
+	n.copy(b)
+	n.count_ += incr; n.sub[i] = sub
 	return n
 }
-func (b *bag_t) cloneWithKey(key string) itrie {
-	n := b.clone()
-	n.key_ = str(key)
+func (b *bagK) modify(incr, i int, sub itrie) itrie {
+	n := new(bagK)
+	n.key_ = b.key_; n.copy(&b.bag_)
+	n.count_ += incr; n.sub[i] = sub
 	return n
 }
-func (b *bag_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
-	n := b.clone()
-	n.key_ = str(key); n.val_ = val; n.full = true
-	if !b.full { n.count_++; return n, 1 }
+func (b *bagV) modify(incr, i int, sub itrie) itrie {
+	n := new(bagV)
+	n.val_ = b.val_; n.copy(&b.bag_)
+	n.count_ += incr; n.sub[i] = sub
+	return n
+}
+func (b *bagKV) modify(incr, i int, sub itrie) itrie {
+	n := new(bagKV)
+	n.key_ = b.key_; n.val_ = b.val_; n.copy(&b.bag_)
+	n.count_ += incr; n.sub[i] = sub
+	return n
+}
+func (b *bag_) cloneWithKey(key string) itrie {
+	n := new(bagK)
+	n.key_ = str(key); n.copy(b)
+	return n
+}
+func (b *bagV) cloneWithKey(key string) itrie {
+	n := new(bagKV)
+	n.key_ = str(key); n.val_ = b.val_; n.copy(&b.bag_)
+	return n
+}
+func (b *bagKV) cloneWithKey(key string) itrie {
+	n := new(bagKV)
+	n.key_ = str(key); n.val_ = b.val_; n.copy(&b.bag_)
+	return n
+}	
+func (b *bag_) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	n := new(bagKV)
+	n.key_ = str(key); n.val_ = val; n.copy(b); n.count_++
+	return n, 1
+}
+func (b *bagV) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	n := new(bagKV)
+	n.key_ = str(key); n.val_ = val; n.copy(&b.bag_)
 	return n, 0
 }
-func (b *bag_t) withoutValue() (itrie, int) {
-	if b.full {
-		n := b.clone()
-		n.val_ = nil; n.full = false; n.count_--
-		return n, 1
-	}
+func (b *bagKV) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	n := new(bagKV)
+	n.key_ = str(key); n.val_ = val; n.copy(&b.bag_)
+	return n, 0
+}
+func (b *bag_) withoutValue() (itrie, int) {
 	return b, 0
-}	
-func (b *bag_t) with(size, i int, cb byte, key string, val Value) (itrie, int) {
-	n := new(bag_t)
-	*n = *b
+}
+func (b *bagV) withoutValue() (itrie, int) {
+	n := b.bag_
+	return &n, 1
+}
+func (b *bagKV) withoutValue() (itrie, int) {
+	n := new(bagK)
+	n.key_ = b.key_; n.bag_ = b.bag_
+	return n, 1
+}
+func (n *bag_) with_(b *bag_, size, i int, cb byte, key string, val Value) int {
+	n.count_ = b.count_
 	n.sub = make([]itrie, size)
 	if size > maxBagSize {
 		panic(fmt.Sprintf("Don't make bag's with more than %d elts.", maxBagSize))
 	}
-	copy(n.crit[:i], b.crit[:i])
+	copy(n.cb[:i], b.cb[:i])
 	copy(n.sub[:i], b.sub[:i])
 	src, dst, added := i, i, 0
 	if size == len(b.sub) {
 		// We're modifying an existing sub-trie
-		if cb != b.crit[i] { panic("We should be modifying a sub-trie") }
-		n.sub[dst], added = b.sub[src].assoc(key, val); dst++; src++
+		if cb != b.cb[i] { panic("We should be modifying a sub-trie") }
+		n.cb[dst] = cb
+		n.sub[dst], added = assoc(b.sub[src], key, val); dst++; src++
 	} else {
-		n.crit[dst] = cb
+		n.cb[dst] = cb
 		n.sub[dst], added = assoc(nil, key, val); dst++
 	}
-	copy(n.crit[dst:], b.crit[src:])
+	copy(n.cb[dst:], b.cb[src:])
 	copy(n.sub[dst:], b.sub[src:])
 	n.count_ = b.count_ + added
+	return added
+}
+func (b *bag_) with(size, i int, cb byte, key string, val Value) (itrie, int) {
+	n := new(bag_)
+	added := n.with_(b, size, i, cb, key, val)
 	return n, added
 }
-func (b *bag_t) find(cb byte) (int, bool) {
+func (b *bagK) with(size, i int, cb byte, key string, val Value) (itrie, int) {
+	n := new(bagK)
+	n.key_ = b.key_
+	added := n.with_(&b.bag_, size, i, cb, key, val)
+	return n, added
+}
+func (b *bagV) with(size, i int, cb byte, key string, val Value) (itrie, int) {
+	n := new(bagV)
+	n.val_ = b.val_
+	added := n.with_(&b.bag_, size, i, cb, key, val)
+	return n, added
+}
+func (b *bagKV) with(size, i int, cb byte, key string, val Value) (itrie, int) {
+	n := new(bagKV)
+	n.key_ = b.key_; n.val_ = b.val_
+	added := n.with_(&b.bag_, size, i, cb, key, val)
+	return n, added
+}
+func (b *bag_) find(cb byte) (int, bool) {
 	// Even though it's sorted, since len <= 7, it's almost certainly not worth it to
 	// binary search.  We can still take advantage of early out.
 	for i := 0; i < len(b.sub); i++ {
-		if cb < b.crit[i] { return i, false }
-		if cb == b.crit[i] { return i, true }
+		if cb < b.cb[i] { return i, false }
+		if cb == b.cb[i] { return i, true }
 	}
 	return len(b.sub), false
 }
-func (b *bag_t) grow(prefix string, cb byte, rest string, val Value) (itrie, int) {
+func (b *bag_) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
 	i, found := b.find(cb)
 	size := len(b.sub)
 	if !found {
@@ -396,57 +614,80 @@ func (b *bag_t) grow(prefix string, cb byte, rest string, val Value) (itrie, int
 		if size >= minSpanSize {
 			e := b.expanse().with(cb)
 			if spanOK(e, size) {
-				// Prefer a span, even if we're small enough to stay bag
-				return span(b, e, cb, leaf(rest, val)), 1
+				// Prefer a span, even if we're small enough to stay a bag
+				return span(t, e, cb, leaf(rest, val)), 1
 			}
 		}
 		if size > maxBagSize {
 			// Prefer a bitmap
-			return bitmap(b, cb, leaf(rest, val)), 1
+			return bitmap(t, cb, leaf(rest, val)), 1
 		}
 	}
-	
-	// We still fit in a bag
-	return b.with(size, i, cb, rest, val)
+	switch n := t.(type) {
+	case *bag_: return n.with(size, i, cb, rest, val)
+	case *bagK: return n.with(size, i, cb, rest, val)
+	case *bagV: return n.with(size, i, cb, rest, val)
+	case *bagKV: return n.with(size, i, cb, rest, val)
+	}
+	panic(fmt.Sprintf("unknown bag subtype: %T", t))
 }
-func (b *bag_t) assoc(key string, val Value) (itrie, int) {
-	return doAssoc(b, key, val)
+func (b *bag_) without(t itrie, key string) (itrie, int) {
+	return b.without_(t, key, 0)
 }
-
-func (b *bag_t) without(key string) (itrie, int) {
-	crit, match := findcrit(key, b.key_)
+func (b *bagK) without(t itrie, key string) (itrie, int) {
+	crit, _ := findcb(key, b.key_)
+	if crit <= len(b.key_) {
+		// we don't have the element being removed
+		return t, 0
+	}
+	return b.bag_.without_(t, key, crit)
+}
+func (b *bagV) without(t itrie, key string) (itrie, int) {
+	if len(key) == 0 {
+		if len(b.sub) == 1 {
+			// collapse this node to it's only child.
+			key = string(b.cb[0]) + b.sub[0].key()
+			return b.sub[0].cloneWithKey(key), 1
+		}
+		return t.withoutValue()
+	}
+	return b.bag_.without_(t, key, 0)
+}
+func (b *bagKV) without(t itrie, key string) (itrie, int) {
+	crit, match := findcb(key, b.key_)
 	if crit < len(b.key_) {
 		// we don't have the element being removed
-		return b, 0
+		return t, 0
 	}
-
 	if match {
 		if len(b.sub) == 1 {
 			// collapse this node to it's only child.
-			key += string(b.crit[0]) + b.sub[0].key()
+			key += string(b.cb[0]) + b.sub[0].key()
 			return b.sub[0].cloneWithKey(key), 1
 		}
-		return b.withoutValue()
+		return t.withoutValue()
 	}
-
+	return b.bag_.without_(t, key, crit)
+}
+func (b *bag_) without_(t itrie, key string, crit int) (itrie, int) {
 	_, cb, rest := splitKey(key, crit)
 	i, found := b.find(cb)
 	if !found {
 		// we don't have the element being removed
 		return b, 0
 	}
-	n, less := b.sub[i].without(rest)
+	n, less := without(b.sub[i], rest)
 	if n == nil {
 		// We removed a leaf -- shrink our sub-tries & possibly turn into a leaf.
 		last := len(b.sub)-1
 		if last == 0 {
-			if !b.full {
+			if !t.hasVal() {
 				panic("we should have a value if we have no sub-tries.")
 			}
-			return leaf(b.key_, b.val_), less
-		} else if last == 1 && !b.full {
+			return leaf(t.key(), t.val()), less
+		} else if last == 1 && !t.hasVal() {
 			o := 1 - i
-			key = b.key_ + string(b.crit[o]) + b.sub[o].key()
+			key = t.key() + string(b.cb[o]) + b.sub[o].key()
 			return b.sub[o].cloneWithKey(key), less
 		}
 		e := b.expanse()
@@ -454,67 +695,86 @@ func (b *bag_t) without(key string) (itrie, int) {
 			e = b.expanseWithout(cb)
 			if spanOK(e, last) {
 				// We can be a span
-				return spanWithout(b, e, cb), less
+				return spanWithout(t, e, cb), less
 			}
 		}
 		// Still a bag.
-		return bagWithout(b, e, cb), less
+		return bagWithout(t, e, cb), less
 	}
 	if less == 0 {
 		if n != b.sub[i] { panic("Shouldn't create a new node without changes.") }
-		return b, 0
+		return t, 0
 	}
-	b = b.clone(); b.sub[i] = n; b.count_ -= less
-	return b, less
+	return t.modify(-1, i, n), less
 }
-func (b *bag_t) entryAt(key string) itrie {
-	crit, match := findcrit(key, b.key_)
-	if match && b.full { return b }
+func (b *bagKV) entryAt(key string) itrie {
+	crit, match := findcb(key, b.key_)
+	if match { return b }
 	if crit >= len(key) { return nil }
 	_, cb, rest := splitKey(key, crit)
 	i, found := b.find(cb)
 	if !found { return nil }
 	return b.sub[i].entryAt(rest)
 }
-func (b *bag_t) inorder(prefix string, ch chan Item) {
-	root := len(prefix) == 0
+func (b *bagV) entryAt(key string) itrie {
+	if len(key) == 0 { return b }
+	_, cb, rest := splitKey(key, 0)
+	i, found := b.find(cb)
+	if !found { return nil }
+	return b.sub[i].entryAt(rest)
+}
+func (b *bagK) entryAt(key string) itrie {
+	crit, match := findcb(key, b.key_)
+	if match { return nil }
+	if crit >= len(key) { return nil }
+	_, cb, rest := splitKey(key, crit)
+	i, found := b.find(cb)
+	if !found { return nil }
+	return b.sub[i].entryAt(rest)
+}
+func (b *bag_) entryAt(key string) itrie {
+	if len(key) == 0 { return nil }
+	_, cb, rest := splitKey(key, 0)
+	i, found := b.find(cb)
+	if !found { return nil }
+	return b.sub[i].entryAt(rest)
+}
+func (b *bagKV) foreach(prefix string, f func(key string, val Value)) {
 	prefix += b.key_
-	if b.full {
-		ch <- Item{prefix, b.val_}
-	}
-	for i := 0; i < len(b.sub); i++ {
-		b.sub[i].inorder(prefix + string(b.crit[i]), ch)
-	}
-	if root { close(ch) }
+	f(prefix, b.val_)
+	b.bag_.foreach(prefix, f)
 }
-func (b *bag_t) withsubs(start, end uint, f func(byte, itrie)) {
-	for i := 0; i < len(b.sub); i++ {
-		if uint(b.crit[i]) < start { continue }
-		if uint(b.crit[i]) >= end { break }
-		f(b.crit[i], b.sub[i])
+func (b *bagV) foreach(prefix string, f func(key string, val Value)) {
+	f(prefix, b.val_)
+	b.bag_.foreach(prefix, f)
+}
+func (b *bagK) foreach(prefix string, f func(key string, val Value)) {
+	prefix += b.key_
+	b.bag_.foreach(prefix, f)
+}
+func (b *bag_) foreach(prefix string, f func(key string, val Value)) {
+	for i, sub := range b.sub {
+		sub.foreach(prefix + string(b.cb[i]), f)
 	}
 }
-func (b *bag_t) key() string { return b.key_ }
-func (b *bag_t) hasVal() bool { return b.full }
-func (b *bag_t) val() Value { return b.val_ }
-func (b *bag_t) count() int { return b.count_ }
-func (b *bag_t) occupied() int { return len(b.sub) }
-func (b *bag_t) expanse() expanse_t { return expanse(b.crit[0], b.crit[len(b.sub)-1]) }
-func (b *bag_t) expanseWithout(cb byte) expanse_t {
+func (b *bag_) withsubs(start, end uint, f func(byte, itrie)) {
+	for i := 0; i < len(b.sub); i++ {
+		if uint(b.cb[i]) < start { continue }
+		if uint(b.cb[i]) >= end { break }
+		f(b.cb[i], b.sub[i])
+	}
+}
+func (b *bag_) count() int { return b.count_ }
+func (b *bag_) occupied() int { return len(b.sub) }
+func (b *bag_) expanse() expanse_t { return expanse(b.cb[0], b.cb[len(b.sub)-1]) }
+func (b *bag_) expanseWithout(cb byte) expanse_t {
 	if len(b.sub) == 0 { panic("Shouldn't have an empty bag.") }
 	if len(b.sub) > 1 {
 		last := len(b.sub)-1
-		if cb == b.crit[0] { return expanse(b.crit[1], b.crit[last]) }
-		if cb == b.crit[last] { return expanse(b.crit[0], b.crit[last-1]) }
-	} else if cb == b.crit[0] { return expanse0() }
+		if cb == b.cb[0] { return expanse(b.cb[1], b.cb[last]) }
+		if cb == b.cb[last] { return expanse(b.cb[0], b.cb[last-1]) }
+	} else if cb == b.cb[0] { return expanse0() }
 	return b.expanse()
-}
-func (b *bag_t) debugPrint(prefix string) {
-	fmt.Printf("%sbag -- prefix: %s, full: %v\n", prefix, b.key_, b.full)
-	for i, t := range b.sub {
-		fmt.Printf("%s cb: %d(%c) %T\n", prefix, b.crit[i], b.crit[i], t)
-		t.debugPrint(prefix+"  ")
-	}
 }
 
 /*
@@ -543,9 +803,11 @@ func makeSpan(e expanse_t, key string, val Value, full bool) *span_t {
  Constructs a new span with th contents of t and l, where l is always a leaf.  It is known
  that l starts a new sub-trie -- t does not have a sub-trie at critical byte cb.
 */
-func span(t itrie, e expanse_t, cb byte, l *leaf_t) *span_t {
+func span(t itrie, e expanse_t, cb byte, l itrie) *span_t {
 	s := makeSpan(e, t.key(), t.val(), t.hasVal())
-	add := func(cb byte, t itrie) {	s.sub[cb - s.start] = t }
+	add := func(cb byte, t itrie) {
+		s.sub[cb - s.start] = t
+	}
 	t.withsubs(0, uint(cb), add)
 	add(cb, l)
 	t.withsubs(uint(cb+1), 256, add)
@@ -585,6 +847,11 @@ func (s *span_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	if !s.full { n.count_++; return n, 1 }
 	return n, 0
 }
+func (s *span_t) modify(incr, i int, sub itrie) itrie {
+	n := s.clone()
+	n.count_ += incr; n.sub[i] = sub
+	return n
+}
 func (s *span_t) withoutValue() (itrie, int) {
 	if s.full {
 		n := s.clone()
@@ -608,7 +875,7 @@ func (s *span_t) with(e expanse_t, cb byte, key string, val Value) (itrie, int) 
 	if o == nil { n.occupied_++ }
 	return n, added
 }
-func (s *span_t) grow(prefix string, cb byte, rest string, val Value) (itrie, int) {
+func (s *span_t) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
 	// Update expanse
 	e0 := s.expanse()
 	e := e0.with(cb)
@@ -619,19 +886,16 @@ func (s *span_t) grow(prefix string, cb byte, rest string, val Value) (itrie, in
 		if !spanOK(e, count) {
 			// We're not a span.
 			if count <= maxBagSize {
-				return bag(s, cb, leaf(rest, val)), 1
+				return bag(t, cb, leaf(rest, val)), 1
 			}
 			// Prefer a bitmap
-			return bitmap(s, cb, leaf(rest, val)), 1
+			return bitmap(t, cb, leaf(rest, val)), 1
 		}
 	}
 	
 	// Prefer a span -- the code below handles the case of adding a new child, or
 	// overwriting an existing one.
 	return s.with(e, cb, rest, val)
-}
-func (s *span_t) assoc(key string, val Value) (itrie, int) {
-	return doAssoc(s, key, val)
 }
 func (s *span_t) firstAfter(i int) byte {
 	i++
@@ -661,11 +925,11 @@ func (s *span_t) expanseWithout(cb byte) expanse_t {
 	}
 	return e
 }
-func (s *span_t) without(key string) (itrie, int) {
-	crit, match := findcrit(key, s.key_)
+func (s *span_t) without(t itrie, key string) (itrie, int) {
+	crit, match := findcb(key, s.key_)
 	if crit < len(s.key_) {
 		// we don't have the element being removed
-		return s, 0
+		return t, 0
 	}
 
 	if match {
@@ -678,20 +942,20 @@ func (s *span_t) without(key string) (itrie, int) {
 			}
 			panic("should have found a non-nil sub-trie.")
 		}
-		return s.withoutValue()
+		return t.withoutValue()
 	}
 
 	_, cb, rest := splitKey(key, crit)
 	if cb < s.start {
 		// we don't have the element being removed
-		return s, 0
+		return t, 0
 	}
 	i := cb - s.start
 	if int(i) >= len(s.sub) {
 		// we don't have the element being removed
-		return s, 0
+		return t, 0
 	}
-	n, less := s.sub[i].without(rest)
+	n, less := without(s.sub[i], rest)
 	if n == nil {
 		// We removed a leaf -- shrink our children & possibly turn into a bag or leaf.
 		occupied := s.occupied_ - 1
@@ -715,26 +979,24 @@ func (s *span_t) without(key string) (itrie, int) {
 			e = s.expanseWithout(cb)
 			if spanOK(e, int(occupied)) {
 				// We can stay a span
-				return spanWithout(s, e, cb), less
+				return spanWithout(t, e, cb), less
 			}
 		}
 		if occupied <= maxBagSize {
 			// We should become a bag
-			return bagWithout(s, e, cb), less
+			return bagWithout(t, e, cb), less
 		}
 		// Looks like we're a bitmap
-		return bitmapWithout(s, e, cb), less
+		return bitmapWithout(t, e, cb), less
 	}
 	if less == 0 {
 		if n != s.sub[i] { panic("Shouldn't make a new node without changes.") }
-		return s, 0
+		return t, 0
 	}
-	s = s.clone()
-	s.sub[i] = n; s.count_ -= less
-	return s, less
+	return t.modify(-1, int(i), n), less
 }
 func (s *span_t) entryAt(key string) itrie {
-	crit, match := findcrit(key, s.key_)
+	crit, match := findcb(key, s.key_)
 	if match && s.full { return s }
 	if crit >= len(key) { return nil }
 	_, cb, rest := splitKey(key, crit)
@@ -744,18 +1006,16 @@ func (s *span_t) entryAt(key string) itrie {
 	}
 	return nil
 }
-func (s *span_t) inorder(prefix string, ch chan Item) {
-	root := len(prefix) == 0
+func (s *span_t) foreach(prefix string, f func(string, Value)) {
 	prefix += s.key_
 	if s.full {
-		ch <- Item{prefix, s.val_}
+		f(prefix, s.val_)
 	}
-	for i, b := range s.sub {
-		if b != nil {
-			b.inorder(prefix + string(s.start+byte(i)), ch)
+	for i, t := range s.sub {
+		if t != nil {
+			t.foreach(prefix + string(s.start+byte(i)), f)
 		}
 	}
-	if root { close(ch) }
 }
 func (s *span_t) withsubs(start, end uint, f func(byte, itrie)) {
 	start = uint(min(max(0, int(start) - int(s.start)), len(s.sub)))
@@ -773,15 +1033,6 @@ func (s *span_t) val() Value { return s.val_ }
 func (s *span_t) count() int { return s.count_ }
 func (s *span_t) occupied() int { return int(s.occupied_) }
 func (s *span_t) expanse() expanse_t { return expanse(s.start, s.start+byte(len(s.sub)-1)) }
-func (s *span_t) debugPrint(prefix string) {
-	fmt.Printf("%sspan -- prefix: %s, full: %v\n", prefix, s.key_, s.full)
-	for i, t := range s.sub {
-		if s.sub[i] == nil { continue }
-		cb := s.start + byte(i)
-		fmt.Printf("%s cb: %d(%c) %T\n", prefix, cb, cb, t)
-		t.debugPrint(prefix + "  ")
-	}
-}
 
 /*
  bitmap_t
@@ -939,6 +1190,11 @@ func (b *bitmap_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	if !b.full { n.count_++; return n, 1 }
 	return n, 0
 }
+func (b *bitmap_t) modify(incr, i int, sub itrie) itrie {
+	n := b.clone()
+	n.count_ += incr; n.sub[i] = sub
+	return n
+}
 func (b *bitmap_t) withoutValue() (itrie, int) {
 	if b.full {
 		n := b.clone()
@@ -959,7 +1215,7 @@ func (b *bitmap_t) with(cb byte, key string, val Value) (itrie, int) {
 	src, dst, added := i, i, 0
 	if b.isset(w, bit) {
 		// replace existing sub-trie
-		n.sub[dst], added = b.sub[src].assoc(key, val); dst++; src++
+		n.sub[dst], added = assoc(b.sub[src], key, val); dst++; src++
 	} else {
 		n.sub[dst], added = assoc(nil, key, val); n.setbit(w, bit); dst++
 	}
@@ -967,7 +1223,7 @@ func (b *bitmap_t) with(cb byte, key string, val Value) (itrie, int) {
 	n.count_ = b.count_ + added
 	return n, added
 }
-func (b *bitmap_t) grow(prefix string, cb byte, rest string, val Value) (itrie, int) {
+func (b *bitmap_t) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
 	// Figure out if we stay a bitmap or if we can become a span
 	// we know we're too big to be a bag
 	w, bit := bitpos(uint(cb))
@@ -977,61 +1233,56 @@ func (b *bitmap_t) grow(prefix string, cb byte, rest string, val Value) (itrie, 
 		count := len(b.sub)
 		if spanOK(e, count+1) {
 			// We can be a span
-			return span(b, e, cb, leaf(rest, val)), 1
+			return span(t, e, cb, leaf(rest, val)), 1
 		}
 	}
 	// still a bitmap
 	return b.with(cb, rest, val)
 }
-func (b *bitmap_t) assoc(key string, val Value) (itrie, int) {
-	return doAssoc(b, key, val)
-}
-func (b *bitmap_t) without(key string) (itrie, int) {
-	crit, match := findcrit(key, b.key_)
+func (b *bitmap_t) without(t itrie, key string) (itrie, int) {
+	crit, match := findcb(key, b.key_)
 	if crit < len(b.key_) {
 		// we don't have the element being removed
-		return b, 0
+		return t, 0
 	}
 
 	if match {
 		// we won't even check for the case of only 1 child in a bitmap -- it just
 		// shouldn't happen
-		return b.withoutValue()
+		return t.withoutValue()
 	}
 
 	_, cb, rest := splitKey(key, crit)
 	w, bit := bitpos(uint(cb))
 	if !b.isset(w, bit) {
 		// we don't have the element being removed
-		return b, 0
+		return t, 0
 	}
 	i := b.indexOf(w, bit)
-	n, less := b.sub[i].without(rest)
+	n, less := without(b.sub[i], rest)
 	if n == nil {
 		// We removed a leaf -- shrink our children & possibly turn into a bag or span.
 		occupied := b.occupied() - 1
 		e := b.expanseWithout(cb)
 		if spanOK(e, occupied) {
 			// We can be a span
-			return spanWithout(b, e, cb), less
+			return spanWithout(t, e, cb), less
 		}
 		if occupied <= maxBagSize {
 			// We should become a bag
-			return bagWithout(b, e, cb), less
+			return bagWithout(t, e, cb), less
 		}
 		// We should stay a bitmap
-		return bitmapWithout(b, e, cb), less
+		return bitmapWithout(t, e, cb), less
 	}
 	if less == 0 {
 		if n != b.sub[i] { panic("Shouldn't create a new node without changes.") }
-		return b, 0
+		return t, 0
 	}
-	b = b.clone()
-	b.sub[i] = n; b.clearbit(w, bit); b.count_--
-	return b, less
+	return b.modify(-1, i, n), less
 }
 func (b *bitmap_t) entryAt(key string) itrie {
-	crit, match := findcrit(key, b.key_)
+	crit, match := findcb(key, b.key_)
 	if match && b.full { return b }
 	if crit >= len(key) { return nil }
 	_, cb, rest := splitKey(key, crit)
@@ -1042,16 +1293,14 @@ func (b *bitmap_t) entryAt(key string) itrie {
 	}
 	return nil
 }
-func (b *bitmap_t) inorder(prefix string, ch chan Item) {
-	root := len(prefix) == 0
+func (b *bitmap_t) foreach(prefix string, f func(string, Value)) {
 	prefix += b.key_
 	if b.full {
-		ch <- Item{prefix, b.val_}
+		f(prefix, b.val_)
 	}
 	b.withsubs(0, 256, func(cb byte, t itrie) {
-		t.inorder(prefix + string(cb), ch)
+		t.foreach(prefix + string(cb), f)
 	})
-	if root { close(ch) }
 }
 func (b *bitmap_t) withsubs(start, end uint, f func(byte, itrie)) {
 	sw, sbit := bitpos(start); sw = min(sw, len(b.bm))
@@ -1092,13 +1341,5 @@ func (b *bitmap_t) expanseWithout(cb byte) expanse_t {
 	}
 	return expanse(e.low, e.high)
 	
-}
-func (b *bitmap_t) debugPrint(prefix string) {
-	fmt.Printf("%sbitmap - prefix: %s, full: %v\n", prefix, b.key_, b.full)
-	pr := func(cb byte, t itrie) {
-		fmt.Printf("%s cb: %d(%c) %T\n", prefix, cb, cb, t)
-		t.debugPrint(prefix + "  ")
-	}
-	b.withsubs(0, 256, pr)
 }
 
