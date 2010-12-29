@@ -402,10 +402,44 @@ func TestIterTrie(t *testing.T) {
 }
 		
 func randomKey() string {
-	return fmt.Sprintf("%x", rand.Int63())
+	r := rand.Int63n(1000000000) + 10000000000
+	return fmt.Sprintf("%x", r)
 }
 
+var alloc int64
+var total int64
+var lookups int64
+var mallocs int64
+var numGC int32
+var pauseNs int64
+
+func snapshotGC() {
+	alloc = -int64(runtime.MemStats.Alloc)
+	total = -int64(runtime.MemStats.TotalAlloc)
+	lookups = -int64(runtime.MemStats.Lookups)
+	mallocs = -int64(runtime.MemStats.Mallocs)
+	numGC = -int32(runtime.MemStats.NumGC)
+	pauseNs = -int64(runtime.MemStats.PauseNs)
+}
+
+func printGC() {
+	alloc += int64(runtime.MemStats.Alloc)
+	total += int64(runtime.MemStats.TotalAlloc)
+	lookups += int64(runtime.MemStats.Lookups)
+	mallocs += int64(runtime.MemStats.Mallocs)
+	numGC += int32(runtime.MemStats.NumGC)
+	pauseNs += int64(runtime.MemStats.PauseNs)
+
+	fmt.Printf("alloc: %d\ntotal: %d\n", alloc, total)
+	fmt.Printf("lookups: %d\nmallocs: %d\n", lookups, mallocs)
+	fmt.Printf("numGC: %d\npauseNs: %d\navg. pauseNs:%d\n", numGC, pauseNs, pauseNs/int64(numGC))
+}	
+	
 func TestRandomAssoc(t *testing.T) {
+	runtime.GC()
+	ResetCumulativeStats()
+	snapshotGC()
+
 	d := Dict()
 	m := map[string]int{}
 
@@ -427,6 +461,14 @@ func TestRandomAssoc(t *testing.T) {
 			t.Errorf("Expected %d at %s, got %d", v, k, vt)
 		}
 	}
+
+	fmt.Printf("Information for Dict...\n")
+	PrintStats(GetStats(d))
+	fmt.Printf("Cumulative Information for Dicts...\n")
+	PrintStats(Cumulative)
+	runtime.GC()
+	fmt.Println("Memory Info...")
+	printGC()
 }
 	
 func BenchmarkKeys(b *testing.B) {

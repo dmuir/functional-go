@@ -4,6 +4,95 @@ import (
 	"fmt"
 )
 
+const (
+	kLeafV = iota
+	kLeafKV
+	kBag_
+	kBagK
+	kBagV
+	kBagKV
+	kSpan_
+	kSpanK
+	kSpanV
+	kSpanKV
+	kBitmap_
+	kBitmapK
+	kBitmapV
+	kBitmapKV
+	
+	numVariants
+)
+
+type Stats [numVariants]int
+var Cumulative Stats
+
+func GetStats(i IDict) Stats {
+	d := i.(dict)
+	var stats Stats
+	if d.t != nil {
+		var collect func(byte, itrie)
+		collect = func(cb byte, t itrie) {	
+			switch n := t.(type) {
+			case *leafV: stats[kLeafV]++
+			case *leafKV: stats[kLeafKV]++
+			case *bag_: stats[kBag_]++
+			case *bagK: stats[kBagK]++
+			case *bagV: stats[kBagV]++
+			case *bagKV: stats[kBagKV]++
+			case *span_: stats[kSpan_]++
+			case *spanK: stats[kSpanK]++
+			case *spanV: stats[kSpanV]++
+			case *spanKV: stats[kSpanKV]++
+			case *bitmap_t: 
+				if len(n.key_) > 0 {
+					if n.full {
+						stats[kBitmapKV]++
+					} else {
+						stats[kBitmapK]++
+					}
+				} else {
+					if n.full {
+						stats[kBitmapV]++
+					} else {
+						stats[kBitmap_]++
+					}
+				}
+			}
+			t.withsubs(0, 256, collect)
+		}
+		collect(0, d.t)
+	}
+	return stats
+}
+
+func ResetCumulativeStats() {
+	for i, _ := range Cumulative {
+		Cumulative[i] = 0
+	}
+}
+
+func PrintStats(stats Stats) {
+	statNames := [numVariants]string{
+		"leafV",
+		"leafKV",
+		"bag_",
+		"bagK",
+		"bagV",
+		"bagKV",
+		"span_",
+		"spanK",
+		"spanV",
+		"spanKV",
+		"bitmap_",
+		"bitmapK",
+		"bitmapV",
+		"bitmapKV",
+	}
+
+	for i, v := range stats {
+		fmt.Printf("%s: %d\n", statNames[i], v)
+	}
+}	
 const maxBagSize = 7
 const minSpanSize = 4
 const maxSpanWaste = 4
@@ -263,10 +352,12 @@ type leafKV struct {
 
 func leaf(key string, val Value) itrie {
 	if len(key) > 0 {
+		Cumulative[kLeafKV]++
 		l := new(leafKV)
 		l.key_ = key; l.val_ = val
 		return l
 	}
+	Cumulative[kLeafV]++
 	l := new(leafV)
 	l.val_ = val
 	return l
@@ -348,6 +439,29 @@ func (b *bag_) printCBs(prefix string) {
 	}
 	fmt.Printf("]\n")
 }
+func makeBag(key string, val Value, full bool) (*bag_, itrie) {
+	if len(key) > 0 {
+		if full {
+			Cumulative[kBagKV]++
+			b := new(bagKV)
+			b.key_ = str(key); b.val_ = val; b.count_ = 1
+			return &b.bag_, b
+		}
+		Cumulative[kBagK]++
+		b := new(bagK)
+		b.key_ = str(key)
+		return &b.bag_, b
+	}
+	if full {
+		Cumulative[kBagV]++
+		b := new(bagV)
+		b.val_ = val; b.count_ = 1
+		return &b.bag_, b
+	}
+	Cumulative[kBag_]++
+	b := new(bag_)
+	return b, b
+}
 func (b *bag_) init1(cb byte, sub itrie) {
 	b.cb[0] = cb
 	b.sub = make([]itrie, 1)
@@ -355,27 +469,9 @@ func (b *bag_) init1(cb byte, sub itrie) {
 	b.count_ += sub.count()
 }	
 func bag1(key string, val Value, full bool, cb byte, sub itrie) itrie {
-	if len(key) > 0 {
-		if full {
-			b := new(bagKV)
-			b.key_ = str(key); b.val_ = val; b.count_ = 1
-			b.init1(cb, sub)
-			return b
-		}
-		b := new(bagK)
-		b.key_ = str(key)
-		b.init1(cb, sub)
-		return b
-	}
-	if full {
-		b := new(bagV)
-		b.val_ = val; b.count_ = 1
-		b.init1(cb, sub)
-		return b
-	}
-	b := new(bag_)
+	b, t := makeBag(key, val, full)
 	b.init1(cb, sub)
-	return b
+	return t
 }
 func (b *bag_) init2(cb0, cb1 byte, sub0, sub1 itrie) {
 	if cb1 < cb0 { cb0, cb1 = cb1, cb0; sub0, sub1 = sub1, sub0 }
@@ -385,27 +481,9 @@ func (b *bag_) init2(cb0, cb1 byte, sub0, sub1 itrie) {
 	b.count_ += sub0.count() + sub1.count()
 }
 func bag2(key string, val Value, full bool, cb0, cb1 byte, sub0, sub1 itrie) itrie {
-	if len(key) > 0 {
-		if full {
-			b := new(bagKV)
-			b.key_ = str(key); b.val_ = val; b.count_ = 1
-			b.init2(cb0, cb1, sub0, sub1)
-			return b
-		}
-		b := new(bagK)
-		b.key_ = str(key)
-		b.init2(cb0, cb1, sub0, sub1)
-		return b
-	}
-	if full {
-		b := new(bagV)
-		b.val_ = val; b.count_ = 1
-		b.init2(cb0, cb1, sub0, sub1)
-		return b
-	}
-	b := new(bag_)
+	b, t := makeBag(key, val, full)
 	b.init2(cb0, cb1, sub0, sub1)
-	return b
+	return t
 }
 func (b *bag_) fillWith(t itrie, cb byte, l itrie) {
 	b.sub = make([]itrie, t.occupied()+1)
@@ -421,27 +499,9 @@ func (b *bag_) fillWith(t itrie, cb byte, l itrie) {
  that l starts a new sub-trie -- t does not have a sub-trie at critical byte cb.
 */
 func bag(t itrie, cb byte, l itrie) itrie {
-	if len(t.key()) > 0 {
-		if t.hasVal() {
-			b := new(bagKV)
-			b.key_ = t.key(); b.val_ = t.val()
-			b.fillWith(t, cb, l)
-			return b
-		}
-		b := new(bagK)
-		b.key_ = t.key()
-		b.fillWith(t, cb, l)
-		return b
-	}
-	if t.hasVal() {
-		b := new(bagV)
-		b.val_ = t.val()
-		b.fillWith(t, cb, l)
-		return b
-	}
-	b := new(bag_)
+	b, r := makeBag(t.key(), t.val(), t.hasVal())
 	b.fillWith(t, cb, l)
-	return b
+	return r
 }
 /*
  Constructs a new bag with the contents of t, minus the sub-trie at critical bit cb.  It
@@ -486,56 +546,55 @@ func (b *bag_) copy(t *bag_) {
 }
 func (b *bag_) modify(incr, i int, sub itrie) itrie {
 	n := new(bag_)
-	n.copy(b)
-	n.count_ += incr; n.sub[i] = sub
+	n.copy(b); n.count_ += incr; n.sub[i] = sub
 	return n
 }
 func (b *bagK) modify(incr, i int, sub itrie) itrie {
 	n := new(bagK)
-	n.key_ = b.key_; n.copy(&b.bag_)
-	n.count_ += incr; n.sub[i] = sub
+	n.key_ = b.key_;
+	n.copy(&b.bag_); n.count_ += incr; n.sub[i] = sub
 	return n
 }
 func (b *bagV) modify(incr, i int, sub itrie) itrie {
 	n := new(bagV)
-	n.val_ = b.val_; n.copy(&b.bag_)
-	n.count_ += incr; n.sub[i] = sub
+	n.val_ = b.val_
+	n.copy(&b.bag_); n.count_ += incr; n.sub[i] = sub
 	return n
 }
 func (b *bagKV) modify(incr, i int, sub itrie) itrie {
 	n := new(bagKV)
-	n.key_ = b.key_; n.val_ = b.val_; n.copy(&b.bag_)
-	n.count_ += incr; n.sub[i] = sub
+	n.key_ = b.key_; n.val_ = b.val_;
+	n.copy(&b.bag_); n.count_ += incr; n.sub[i] = sub
 	return n
 }
 func (b *bag_) cloneWithKey(key string) itrie {
 	n := new(bagK)
-	n.key_ = str(key); n.copy(b)
+	n.bag_ = *b; n.key_ = str(key)
 	return n
 }
 func (b *bagV) cloneWithKey(key string) itrie {
 	n := new(bagKV)
-	n.key_ = str(key); n.val_ = b.val_; n.copy(&b.bag_)
+	n.bag_ = b.bag_; n.key_ = str(key); n.val_ = b.val_
 	return n
 }
 func (b *bagKV) cloneWithKey(key string) itrie {
 	n := new(bagKV)
-	n.key_ = str(key); n.val_ = b.val_; n.copy(&b.bag_)
+	n.bag_ = b.bag_; n.key_ = str(key); n.val_ = b.val_
 	return n
 }	
 func (b *bag_) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(bagKV)
-	n.key_ = str(key); n.val_ = val; n.copy(b); n.count_++
+	n.bag_ = *b; n.key_ = str(key); n.val_ = val; n.count_++
 	return n, 1
 }
 func (b *bagV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(bagKV)
-	n.key_ = str(key); n.val_ = val; n.copy(&b.bag_)
+	n.bag_ = b.bag_; n.key_ = str(key); n.val_ = val
 	return n, 0
 }
 func (b *bagKV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(bagKV)
-	n.key_ = str(key); n.val_ = val; n.copy(&b.bag_)
+	n.bag_ = b.bag_; n.key_ = str(key); n.val_ = val
 	return n, 0
 }
 func (b *bag_) withoutValue() (itrie, int) {
@@ -783,28 +842,60 @@ func (b *bag_) expanseWithout(cb byte) expanse_t {
  A span is a trie node that simply stores an array of sub-tries, where the critical byte
  for the sub-trie is index+start.  Range's are only used for sub-tries with high density.
 */
-type span_t struct {
-	key_ string
-	val_ Value
-	count_ int
-	full bool
+type span_ struct {
+	entry_
 	start byte
 	occupied_ uint16
+	count_ int
 	sub []itrie
 }
-func makeSpan(e expanse_t, key string, val Value, full bool) *span_t {
-	s := new(span_t)
-	s.key_ = key; s.val_ = val; s.full = full
+type spanK struct {
+	entryK
+	span_
+}
+type spanV struct {
+	entryV
+	span_
+}
+type spanKV struct {
+	entryKV
+	span_
+}
+func makeSpan(e expanse_t, key string, val Value, full bool) (s *span_, t itrie) {
+	if len(key) > 0 {
+		if full {
+			Cumulative[kSpanKV]++
+			n := new(spanKV)
+			n.key_ = key; n.val_ = val; n.count_ = 1
+			s, t = &n.span_, n
+		} else {
+			Cumulative[kSpanK]++
+			n := new(spanK)
+			n.key_ = key
+			s, t = &n.span_, n
+		}
+	} else {
+		if full {
+			Cumulative[kSpanV]++
+			n := new(spanV)
+			n.val_ = val; n.count_ = 1
+			s, t = &n.span_, n
+		} else {
+			Cumulative[kSpan_]++
+			n := new(span_)
+			s, t = n, n
+		}
+	}
 	s.start = e.low
-	s.sub = make([]itrie, e.size)
-	return s
+	s.sub = make([]itrie, int(e.size))
+	return
 }
 /*
  Constructs a new span with th contents of t and l, where l is always a leaf.  It is known
  that l starts a new sub-trie -- t does not have a sub-trie at critical byte cb.
 */
-func span(t itrie, e expanse_t, cb byte, l itrie) *span_t {
-	s := makeSpan(e, t.key(), t.val(), t.hasVal())
+func span(t itrie, e expanse_t, cb byte, l itrie) itrie {
+	s, r := makeSpan(e, t.key(), t.val(), t.hasVal())
 	add := func(cb byte, t itrie) {
 		s.sub[cb - s.start] = t
 	}
@@ -813,59 +904,98 @@ func span(t itrie, e expanse_t, cb byte, l itrie) *span_t {
 	t.withsubs(uint(cb+1), 256, add)
 	s.count_ = t.count() + 1
 	s.occupied_ = uint16(t.occupied() + 1)
-	return s
+	return r
 }
 /*
  Constructs a new span with the contents of t, minus the sub-trie at critical byte cb.  It
  is expected that any sub-trie at cb is a leaf.
 */
-func spanWithout(t itrie, e expanse_t, without byte) *span_t {
-	s := makeSpan(e, t.key(), t.val(), t.hasVal())
+func spanWithout(t itrie, e expanse_t, without byte) itrie {
+	s, r := makeSpan(e, t.key(), t.val(), t.hasVal())
 	add := func(cb byte, t itrie) { s.sub[cb - s.start] = t	}
 	t.withsubs(uint(e.low), uint(without), add)
 	t.withsubs(uint(without+1), uint(e.high)+1, add)
 	s.count_ = t.count() - 1
 	s.occupied_ = uint16(t.occupied() - 1)
-	return s
+	return r
 }
 
-func (s *span_t) clone() *span_t {
-	n := new(span_t)
-	*n = *s
-	n.sub = make([]itrie, len(s.sub))
-	copy(n.sub, s.sub)
+func (s *span_) copy(t *span_) {
+	s.start = t.start
+	s.count_ = t.count_
+	s.sub = make([]itrie, len(t.sub))
+	copy(s.sub, t.sub)
+}
+func (s *span_) cloneWithKey(key string) itrie {
+	n := new(spanK)
+	n.span_ = *s; n.key_ = str(key)
 	return n
 }
-func (s *span_t) cloneWithKey(key string) itrie {
-	n := s.clone()
-	n.key_ = str(key)
+func (s *spanV) cloneWithKey(key string) itrie {
+	n := new(spanKV)
+	n.span_ = s.span_; n.key_ = str(key); n.val_ = s.val_
 	return n
 }
-func (s *span_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
-	n := s.clone()
-	n.key_ = str(key); n.val_ = val; n.full = true
-	if !s.full { n.count_++; return n, 1 }
+func (s *spanKV) cloneWithKey(key string) itrie {
+	n := new(spanKV)
+	n.span_ = s.span_; n.key_ = str(key); n.val_ = s.val_
+	return n
+}
+func (s *span_) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	n := new(spanKV)
+	n.span_ = *s; n.key_ = str(key); n.val_ = val
+	return n, 1
+}
+func (s *spanV) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	n := new(spanKV)
+	n.span_ = s.span_; n.key_ = str(key); n.val_ = val
 	return n, 0
 }
-func (s *span_t) modify(incr, i int, sub itrie) itrie {
-	n := s.clone()
-	n.count_ += incr; n.sub[i] = sub
+func (s *spanKV) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	n := new(spanKV)
+	n.span_ = s.span_; n.key_ = str(key); n.val_ = val
+	return n, 0
+}
+func (s *span_) modify(incr, i int, sub itrie) itrie {
+	n := new(span_)
+	n.copy(s); n.count_ += incr; n.sub[i] = sub
 	return n
 }
-func (s *span_t) withoutValue() (itrie, int) {
-	if s.full {
-		n := s.clone()
-		n.val_ = nil; n.full = false; n.count_--
-		return n, 1
-	} 
+func (s *spanK) modify(incr, i int, sub itrie) itrie {
+	n := new(spanK)
+	n.key_ = s.key_
+	n.copy(&s.span_); n.count_ += incr; n.sub[i] = sub
+	return n
+}
+func (s *spanV) modify(incr, i int, sub itrie) itrie {
+	n := new(spanV)
+	n.val_ = s.val_
+	n.copy(&s.span_); n.count_ += incr; n.sub[i] = sub
+	return n
+}
+func (s *spanKV) modify(incr, i int, sub itrie) itrie {
+	n := new(spanKV)
+	n.key_ = s.key_; n.val_ = s.val_
+	n.copy(&s.span_); n.count_ += incr; n.sub[i] = sub
+	return n
+}
+func (s *span_) withoutValue() (itrie, int) {
 	return s, 0
 }
-func (s *span_t) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
+func (s *spanV) withoutValue() (itrie, int) {
+	n := new(span_)
+	*n = s.span_; n.count_--
+	return n, 1
+}
+func (s *spanKV) withoutValue() (itrie, int) {
+	n := new(spanK)
+	n.span_ = s.span_; n.key_ = s.key_; n.count_--
+	return n, 1
+}
+func (n *span_) with_(s *span_, e expanse_t, cb byte, key string, val Value) int {
 	if e.low > s.start { panic("new start must be <= old start") }
 	if int(e.size) < len(s.sub) { panic("new size must be >= old size") }
-	n := new(span_t)
-	*n = *s
-	n.start = e.low
+	n.start = e.low; n.count_ = s.count_; n.occupied_ = s.occupied_
 	n.sub = make([]itrie, int(e.size))
 	copy(n.sub[s.start - n.start:], s.sub)
 	i, added := int(cb - n.start), 0
@@ -873,9 +1003,32 @@ func (s *span_t) with(e expanse_t, cb byte, key string, val Value) (itrie, int) 
 	n.sub[i], added = assoc(o, key, val)
 	n.count_ += added
 	if o == nil { n.occupied_++ }
+	return added
+}
+func (s *span_) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
+	n := new(span_)
+	added := n.with_(s, e, cb, key, val)
 	return n, added
 }
-func (s *span_t) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
+func (s *spanK) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
+	n := new(spanK)
+	n.key_ = s.key_
+	added := n.with_(&s.span_, e, cb, key, val)
+	return n, added
+}
+func (s *spanV) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
+	n := new(spanV)
+	n.val_ = s.val_
+	added := n.with_(&s.span_, e, cb, key, val)
+	return n, added
+}
+func (s *spanKV) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
+	n := new(spanKV)
+	n.key_ = s.key_; n.val_ = s.val_
+	added := n.with_(&s.span_, e, cb, key, val)
+	return n, added
+}
+func (s *span_) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
 	// Update expanse
 	e0 := s.expanse()
 	e := e0.with(cb)
@@ -895,23 +1048,29 @@ func (s *span_t) assoc(t itrie, prefix string, cb byte, rest string, val Value) 
 	
 	// Prefer a span -- the code below handles the case of adding a new child, or
 	// overwriting an existing one.
-	return s.with(e, cb, rest, val)
+	switch n := t.(type) {
+	case *span_: return n.with(e, cb, rest, val)
+	case *spanK: return n.with(e, cb, rest, val)
+	case *spanV: return n.with(e, cb, rest, val)
+	case *spanKV: return n.with(e, cb, rest, val)
+	}
+	panic(fmt.Sprintf("unknown span subtype: %T", t))
 }
-func (s *span_t) firstAfter(i int) byte {
+func (s *span_) firstAfter(i int) byte {
 	i++
 	for ; i < len(s.sub); i++ {
 		if s.sub[i] != nil { return byte(i) }
 	}
 	panic("no further occupied elements in span")
 }
-func (s *span_t) lastBefore(i int) byte {
+func (s *span_) lastBefore(i int) byte {
 	i--
 	for ; i >= 0; i-- {
 		if s.sub[i] != nil { return byte(i) }
 	}
 	panic("no prior occupied elements in span")
 }
-func (s *span_t) expanseWithout(cb byte) expanse_t {
+func (s *span_) expanseWithout(cb byte) expanse_t {
 	e := s.expanse()
 	if cb == e.low {
 		d := s.firstAfter(0)
@@ -925,7 +1084,38 @@ func (s *span_t) expanseWithout(cb byte) expanse_t {
 	}
 	return e
 }
-func (s *span_t) without(t itrie, key string) (itrie, int) {
+func (s *span_) without(t itrie, key string) (itrie, int) {
+	return s.without_(t, key, 0)
+}
+func (s *spanK) without(t itrie, key string) (itrie, int) {
+	crit, match := findcb(key, s.key_)
+	if crit < len(s.key_) {
+		// we don't have the element being removed
+		return t, 0
+	}
+
+	if match {
+		// we don't have the element being removed
+		return t, 0
+	}
+	return s.without_(t, key, crit)
+}
+func (s *spanV) without(t itrie, key string) (itrie, int) {
+	if len(key) == 0 {
+		if s.occupied_ == 1 {
+			for i, c := range s.sub {
+				// collapse this node to it's only child.
+				if c == nil { continue }
+				key = string(s.start+byte(i)) + c.key()
+				return c.cloneWithKey(key), 1
+			}
+			panic("should have found a non-nil sub-trie.")
+		}
+		return t.withoutValue()
+	}
+	return s.without_(t, key, 0)
+}
+func (s *spanKV) without(t itrie, key string) (itrie, int) {
 	crit, match := findcb(key, s.key_)
 	if crit < len(s.key_) {
 		// we don't have the element being removed
@@ -944,7 +1134,9 @@ func (s *span_t) without(t itrie, key string) (itrie, int) {
 		}
 		return t.withoutValue()
 	}
-
+	return s.without_(t, key, crit)
+}
+func (s *span_) without_(t itrie, key string, crit int) (itrie, int) {
 	_, cb, rest := splitKey(key, crit)
 	if cb < s.start {
 		// we don't have the element being removed
@@ -962,16 +1154,16 @@ func (s *span_t) without(t itrie, key string) (itrie, int) {
 		// We shouldn't actually let spans get small enough to hit either of the next
 		// two cases
 		if occupied == 0 {
-			if !s.full { panic("we should have a value if we have no sub-tries.") }
-			return leaf(s.key_, s.val_), less
+			if !t.hasVal() { panic("we should have a value if we have no sub-tries.") }
+			return leaf(t.key(), t.val()), less
 		} 
-		if occupied == 1 && !s.full {
+		if occupied == 1 && !t.hasVal() {
 			o := 0
 			for ; o < len(s.sub); o++ {
 				if byte(o) != i && s.sub[o] != nil { break }
 			}
 			if o >= len(s.sub) { panic("We should have another valid sub-trie") }
-			key = s.key_ + string(cb) + s.sub[o].key()
+			key = t.key() + string(cb) + s.sub[o].key()
 			return s.sub[o].cloneWithKey(key), less
 		}
 		e := s.expanse()
@@ -995,29 +1187,67 @@ func (s *span_t) without(t itrie, key string) (itrie, int) {
 	}
 	return t.modify(-1, int(i), n), less
 }
-func (s *span_t) entryAt(key string) itrie {
-	crit, match := findcb(key, s.key_)
-	if match && s.full { return s }
-	if crit >= len(key) { return nil }
-	_, cb, rest := splitKey(key, crit)
-	if cb >= s.start && int(cb) < (int(s.start)+len(s.sub)) {
-		i := cb - s.start
+func (s *span_) entryAt(key string) itrie {
+	if len(key) == 0 { return nil }
+	_, cb, rest := splitKey(key, 0)
+	i := int(cb) - int(s.start)
+	if i >= 0 && i < len(s.sub) {
 		if s.sub[i] != nil { return s.sub[i].entryAt(rest) }
 	}
 	return nil
 }
-func (s *span_t) foreach(prefix string, f func(string, Value)) {
-	prefix += s.key_
-	if s.full {
-		f(prefix, s.val_)
+func (s *spanK) entryAt(key string) itrie {
+	crit, _ := findcb(key, s.key_)
+	if crit >= len(key) { return nil }
+	_, cb, rest := splitKey(key, crit)
+	i := int(cb) - int(s.start)
+	if i >= 0 && i < len(s.sub) {
+		if s.sub[i] != nil { return s.sub[i].entryAt(rest) }
 	}
+	return nil
+}
+func (s *spanV) entryAt(key string) itrie {
+	if len(key) == 0 { return s }
+	_, cb, rest := splitKey(key, 0)
+	i := int(cb) - int(s.start)
+	if i >= 0 && i < len(s.sub) {
+		if s.sub[i] != nil { return s.sub[i].entryAt(rest) }
+	}
+	return nil
+}
+func (s *spanKV) entryAt(key string) itrie {
+	crit, match := findcb(key, s.key_)
+	if match { return s }
+	if crit >= len(key) { return nil }
+	_, cb, rest := splitKey(key, crit)
+	i := int(cb) - int(s.start)
+	if i >= 0 && i < len(s.sub) {
+		if s.sub[i] != nil { return s.sub[i].entryAt(rest) }
+	}
+	return nil
+}
+func (s *span_) foreach(prefix string, f func(string, Value)) {
 	for i, t := range s.sub {
 		if t != nil {
 			t.foreach(prefix + string(s.start+byte(i)), f)
 		}
 	}
 }
-func (s *span_t) withsubs(start, end uint, f func(byte, itrie)) {
+func (s *spanK) foreach(prefix string, f func(string, Value)) {
+	prefix += s.key_
+	s.span_.foreach(prefix, f)
+}
+func (s *spanV) foreach(prefix string, f func(string, Value)) {
+	f(prefix, s.val_)
+	s.span_.foreach(prefix, f)
+}
+func (s *spanKV) foreach(prefix string, f func(string, Value)) {
+	prefix += s.key_
+	f(prefix, s.val_)
+	s.span_.foreach(prefix, f)
+}
+
+func (s *span_) withsubs(start, end uint, f func(byte, itrie)) {
 	start = uint(min(max(0, int(start) - int(s.start)), len(s.sub)))
 	end = uint(min(max(0, int(end) - int(s.start)), len(s.sub)))
 	if start >= end { return }
@@ -1027,12 +1257,9 @@ func (s *span_t) withsubs(start, end uint, f func(byte, itrie)) {
 		f(cb, t)
 	}
 }
-func (s *span_t) key() string { return s.key_ }
-func (s *span_t) hasVal() bool { return s.full }
-func (s *span_t) val() Value { return s.val_ }
-func (s *span_t) count() int { return s.count_ }
-func (s *span_t) occupied() int { return int(s.occupied_) }
-func (s *span_t) expanse() expanse_t { return expanse(s.start, s.start+byte(len(s.sub)-1)) }
+func (s *span_) count() int { return s.count_ }
+func (s *span_) occupied() int { return int(s.occupied_) }
+func (s *span_) expanse() expanse_t { return expanse(s.start, s.start+byte(len(s.sub)-1)) }
 
 /*
  bitmap_t
@@ -1136,6 +1363,11 @@ func (b *bitmap_t) firstAfter(cb byte) byte {
 	return cb
 }
 func makeBitmap(size int, key string, val Value, full bool) *bitmap_t {
+	if len(key) > 0 {
+		if full { Cumulative[kBitmapKV]++ } else { Cumulative[kBitmapK]++ }
+	} else {
+		if full { Cumulative[kBitmapV]++ } else { Cumulative[kBitmap_]++ }
+	}
 	bm := new(bitmap_t); bm.key_ = key; bm.val_ = val; bm.full = full
 	bm.sub = make([]itrie, size)
 	return bm
