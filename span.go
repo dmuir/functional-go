@@ -32,7 +32,7 @@ func makeSpan(e expanse_t, key string, val Value, full bool) (s *span_, t itrie)
 		if full {
 			Cumulative[kSpanKV]++
 			n := new(spanKV)
-			n.key_ = str(key); n.val_ = val; n.count_ = 1
+			n.key_ = str(key); n.val_ = val
 			s, t = &n.span_, n
 		} else {
 			Cumulative[kSpanK]++
@@ -44,7 +44,7 @@ func makeSpan(e expanse_t, key string, val Value, full bool) (s *span_, t itrie)
 		if full {
 			Cumulative[kSpanV]++
 			n := new(spanV)
-			n.val_ = val; n.count_ = 1
+			n.val_ = val
 			s, t = &n.span_, n
 		} else {
 			Cumulative[kSpan_]++
@@ -113,7 +113,7 @@ func (s *spanKV) cloneWithKey(key string) itrie {
 func (s *span_) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(spanKV)
 	Cumulative[kSpanKV]++
-	n.span_ = *s; n.key_ = str(key); n.val_ = val
+	n.span_ = *s; n.key_ = str(key); n.val_ = val; n.count_++
 	return n, 1
 }
 func (s *spanV) cloneWithKeyValue(key string, val Value) (itrie, int) {

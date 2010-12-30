@@ -1,19 +1,32 @@
 package immutable
 
+import "fmt"
+
 /*
  bitmap_t
 
  A bitmap is a trie node that uses a bitmap to track which of it's children are occupied.
 */
-type bitmap_t struct {
-	key_ string
-	val_ Value
-	count_ int
-	full bool
+type bitmap_ struct {
+	entry_
 	off [4]uint8
+	count_ int
 	bm [4]uint64
 	sub []itrie
 }
+type bitmapK struct {
+	entryK
+	bitmap_
+}
+type bitmapV struct {
+	entryV
+	bitmap_
+}
+type bitmapKV struct {
+	entryKV
+	bitmap_
+}
+
 /*
  population count implementation taken from http://www.wikipedia.org/wiki/Hamming_weight
 */
@@ -42,18 +55,18 @@ func reverse(bits uint64) uint64 {
 func bitpos(ch uint) (int, uint64) {
 	return int((ch >> 6)), uint64(1) << (ch & 0x3f)
 }
-func (b *bitmap_t) setbit(w int, bit uint64) {
+func (b *bitmap_) setbit(w int, bit uint64) {
 	b.bm[w] |= bit
 	for ; w < 3; w++ { b.off[w+1] += 1 }
 }
-func (b *bitmap_t) clearbit(w int, bit uint64) {
+func (b *bitmap_) clearbit(w int, bit uint64) {
 	b.bm[w] &= ^bit
 	for ; w < 3; w++ { b.off[w+1] -= 1 }
 }
-func (b *bitmap_t) isset(w int, bit uint64) bool {
+func (b *bitmap_) isset(w int, bit uint64) bool {
 	return b.bm[w] & bit != 0
 }
-func (b *bitmap_t) indexOf(w int, bit uint64) int {
+func (b *bitmap_) indexOf(w int, bit uint64) int {
 	return int(countbits(b.bm[w] & (bit-1)) + b.off[w])
 }
 func minbit(bm uint64) byte {
@@ -65,21 +78,21 @@ func maxbit(bm uint64) byte {
 	bit := bm ^ (bm & (bm-1))
 	return byte(63) - countbits(bit-1)
 }
-func (b *bitmap_t) min() byte {
+func (b *bitmap_) min() byte {
 	for w, bm := range b.bm {
 		if bm == 0 { continue }
 		return minbit(bm) + byte(64*w)
 	}
 	panic("Didn't find any bits set in bitmap")
 }
-func (b *bitmap_t) max() byte {
+func (b *bitmap_) max() byte {
 	for w := 3; w >= 0; w-- {
 		if b.bm[w] == 0 { continue }
 		return maxbit(b.bm[w]) + byte(64*w)
 	}
 	panic("Didn't find any bits set in bitmap")
 }
-func (b *bitmap_t) lastBefore(cb byte) byte {
+func (b *bitmap_) lastBefore(cb byte) byte {
 	w, bit := bitpos(uint(cb))
 	mask := bit - 1
 	bm := b.bm[w] & mask
@@ -90,7 +103,7 @@ func (b *bitmap_t) lastBefore(cb byte) byte {
 	}		
 	return cb
 }
-func (b *bitmap_t) firstAfter(cb byte) byte {
+func (b *bitmap_) firstAfter(cb byte) byte {
 	w, bit := bitpos(uint(cb))
 	mask := ^((bit - 1) | bit)
 	bm := b.bm[w] & mask
@@ -101,22 +114,40 @@ func (b *bitmap_t) firstAfter(cb byte) byte {
 	}
 	return cb
 }
-func makeBitmap(size int, key string, val Value, full bool) *bitmap_t {
+func makeBitmap(size int, key string, val Value, full bool) (b *bitmap_, t itrie) {
 	if len(key) > 0 {
-		if full { Cumulative[kBitmapKV]++ } else { Cumulative[kBitmapK]++ }
+		if full {
+			Cumulative[kBitmapKV]++
+			n := new(bitmapKV)
+			n.key_ = str(key); n.val_ = val
+			b, t = &n.bitmap_, n
+		} else {
+			Cumulative[kBitmapK]++
+			n := new(bitmapK)
+			n.key_ = str(key)
+			b, t = &n.bitmap_, n
+		}
 	} else {
-		if full { Cumulative[kBitmapV]++ } else { Cumulative[kBitmap_]++ }
+		if full {
+			Cumulative[kBitmapV]++
+			n := new(bitmapV)
+			n.val_ = val
+			b, t = &n.bitmap_, n
+		} else {
+			Cumulative[kBitmap_]++
+			n := new(bitmap_)
+			b, t = n, n
+		}
 	}
-	bm := new(bitmap_t); bm.key_ = str(key); bm.val_ = val; bm.full = full
-	bm.sub = make([]itrie, size)
-	return bm
+	b.sub = make([]itrie, int(size))
+	return
 }
 /*
  Constructs a new bitmap with the contents of t and l, where l is always a leaf.  It is known
  that l starts a new sub-trie -- t does not have a sub-trie at critical byte cb.
 */
-func bitmap(t itrie, cb byte, l itrie) *bitmap_t {
-	bm := makeBitmap(t.occupied()+1, t.key(), t.val(), t.hasVal())
+func bitmap(t itrie, cb byte, l itrie) itrie {
+	bm, r := makeBitmap(t.occupied()+1, t.key(), t.val(), t.hasVal())
 	index := 0
 	add := func(cb byte, t itrie) {
 		w, bit := bitpos(uint(cb))
@@ -126,14 +157,14 @@ func bitmap(t itrie, cb byte, l itrie) *bitmap_t {
 	add(cb, l)
 	t.withsubs(uint(cb+1), 256, add)
 	bm.count_ = t.count() + 1
-	return bm
+	return r
 }
 /*
  Constructs a new bitmap with the contents of t, minus the sub-trie at critical byte cb.  It
  is expected that any sub-trie at cb is a leaf.
 */
-func bitmapWithout(t itrie, e expanse_t, without byte) *bitmap_t {
-	bm := makeBitmap(t.occupied()-1, t.key(), t.val(), t.hasVal())
+func bitmapWithout(t itrie, e expanse_t, without byte) itrie {
+	bm, r := makeBitmap(t.occupied()-1, t.key(), t.val(), t.hasVal())
 	index := 0
 	add := func(cb byte, t itrie) { 
 		bm.sub[index] = t; bm.setbit(bitpos(uint(cb))); index++
@@ -141,41 +172,85 @@ func bitmapWithout(t itrie, e expanse_t, without byte) *bitmap_t {
 	t.withsubs(uint(e.low), uint(without), add)
 	t.withsubs(uint(without+1), uint(e.high)+1, add)
 	bm.count_ = t.count() - 1
-	return bm
+	return r
 }
-func (b *bitmap_t) clone() *bitmap_t {
-	n := new(bitmap_t)
-	*n = *b
-	n.sub = make([]itrie, len(b.sub))
-	copy(n.sub, b.sub)
+
+func (b *bitmap_) copy(t *bitmap_) {
+	b.count_ = t.count_
+	b.off = t.off
+	b.bm = t.bm
+	b.sub = make([]itrie, len(t.sub))
+	copy(b.sub, t.sub)
+}	
+func (b *bitmap_) cloneWithKey(key string) itrie {
+	n := new(bitmapK)
+	Cumulative[kBitmapK]++
+	n.bitmap_ = *b; n.key_ = str(key)
 	return n
 }
-func (b *bitmap_t) cloneWithKey(key string) itrie {
-	n := b.clone()
-	n.key_ = str(key)
+func (b *bitmapV) cloneWithKey(key string) itrie {
+	n := new(bitmapKV)
+	Cumulative[kBitmapKV]++
+	n.bitmap_ = b.bitmap_; n.key_ = str(key); n.val_ = b.val_
 	return n
 }
-func (b *bitmap_t) cloneWithKeyValue(key string, val Value) (itrie, int) {
-	n := b.clone()
-	n.key_ = str(key); n.val_ = val; n.full = true
-	if !b.full { n.count_++; return n, 1 }
+func (b *bitmapKV) cloneWithKey(key string) itrie {
+	n := new(bitmapKV)
+	Cumulative[kBitmapKV]++
+	n.bitmap_ = b.bitmap_; n.key_ = str(key); n.val_ = b.val_
+	return n
+}
+func (b *bitmap_) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	n := new(bitmapKV)
+	Cumulative[kBitmapKV]++
+	n.bitmap_ = *b; n.key_ = str(key); n.val_ = val; n.count_++
+	return n, 1
+}
+func (b *bitmapV) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	n := new(bitmapKV)
+	Cumulative[kBitmapKV]++
+	n.bitmap_ = b.bitmap_; n.key_ = str(key); n.val_ = val
 	return n, 0
 }
-func (b *bitmap_t) modify(incr, i int, sub itrie) itrie {
-	n := b.clone()
-	n.count_ += incr; n.sub[i] = sub
+func (b *bitmapKV) cloneWithKeyValue(key string, val Value) (itrie, int) {
+	n := new(bitmapKV)
+	Cumulative[kBitmapKV]++
+	n.bitmap_ = b.bitmap_; n.key_ = str(key); n.val_ = val
+	return n, 0
+}
+func (b *bitmap_) modify(incr, i int, sub itrie) itrie {
+	n := new(bitmap_)
+	n.copy(b); n.count_ += incr; n.sub[i] = sub
 	return n
 }
-func (b *bitmap_t) withoutValue() (itrie, int) {
-	if b.full {
-		n := b.clone()
-		n.val_ = nil; n.full = false; n.count_--
-		return n, 1
-	}
+func (b *bitmapK) modify(incr, i int, sub itrie) itrie {
+	n := new(bitmapK)
+	n.copy(&b.bitmap_); n.key_ = b.key_; n.count_ += incr; n.sub[i] = sub
+	return n
+}
+func (b *bitmapV) modify(incr, i int, sub itrie) itrie {
+	n := new(bitmapV)
+	n.copy(&b.bitmap_); n.val_ = b.val_; n.count_ += incr; n.sub[i] = sub
+	return n
+}
+func (b *bitmapKV) modify(incr, i int, sub itrie) itrie {
+	n := new(bitmapKV)
+	n.copy(&b.bitmap_); n.key_ = b.key_; n.val_ = b.val_; n.count_ += incr; n.sub[i] = sub
+	return n
+}
+func (b *bitmap_) withoutValue() (itrie, int) {
 	return b, 0
 }
-func (b *bitmap_t) with(cb byte, key string, val Value) (itrie, int) {
-	n := new(bitmap_t)
+func (b *bitmapV) withoutValue() (itrie, int) {
+	n := b.bitmap_
+	return &n, 1
+}
+func (b *bitmapKV) withoutValue() (itrie, int) {
+	n := new(bitmapK)
+	n.bitmap_ = b.bitmap_; n.key_ = b.key_
+	return n, 1
+}
+func (n *bitmap_) with_(b *bitmap_, cb byte, key string, val Value) int {
 	*n = *b
 	w, bit := bitpos(uint(cb))
 	size := len(b.sub)
@@ -192,9 +267,36 @@ func (b *bitmap_t) with(cb byte, key string, val Value) (itrie, int) {
 	}
 	copy(n.sub[dst:], b.sub[src:])
 	n.count_ = b.count_ + added
+	return added
+}
+func (b *bitmap_) with(cb byte, key string, val Value) (itrie, int) {
+	n := new(bitmap_)
+	Cumulative[kBitmap_]++
+	added := n.with_(b, cb, key, val)
 	return n, added
 }
-func (b *bitmap_t) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
+func (b *bitmapK) with(cb byte, key string, val Value) (itrie, int) {
+	n := new(bitmapK)
+	Cumulative[kBitmap_]++
+	n.key_ = b.key_
+	added := n.with_(&b.bitmap_, cb, key, val)
+	return n, added
+}
+func (b *bitmapV) with(cb byte, key string, val Value) (itrie, int) {
+	n := new(bitmapV)
+	Cumulative[kBitmap_]++
+	n.val_ = b.val_
+	added := n.with_(&b.bitmap_, cb, key, val)
+	return n, added
+}
+func (b *bitmapKV) with(cb byte, key string, val Value) (itrie, int) {
+	n := new(bitmapKV)
+	Cumulative[kBitmap_]++
+	n.key_ = b.key_; n.val_ = b.val_
+	added := n.with_(&b.bitmap_, cb, key, val)
+	return n, added
+}
+func (b *bitmap_) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
 	// Figure out if we stay a bitmap or if we can become a span
 	// we know we're too big to be a bag
 	w, bit := bitpos(uint(cb))
@@ -208,21 +310,45 @@ func (b *bitmap_t) assoc(t itrie, prefix string, cb byte, rest string, val Value
 		}
 	}
 	// still a bitmap
-	return b.with(cb, rest, val)
+	switch n := t.(type) {
+	case *bitmap_: return n.with(cb, rest, val)
+	case *bitmapK: return n.with(cb, rest, val)
+	case *bitmapV: return n.with(cb, rest, val)
+	case *bitmapKV: return n.with(cb, rest, val)
+	}
+	panic(fmt.Sprintf("unknown bitmap subtype: %T", t))
 }
-func (b *bitmap_t) without(t itrie, key string) (itrie, int) {
-	crit, match := findcb(key, b.key_)
+func (b *bitmap_) without(t itrie, key string) (itrie, int) {
+	return b.without_(t, key, 0)
+}
+func (b *bitmapK) without(t itrie, key string) (itrie, int) {
+	crit, _ := findcb(key, b.key_)
 	if crit < len(b.key_) {
-		// we don't have the element being removed
 		return t, 0
 	}
-
+	return b.bitmap_.without_(t, key, crit)
+}
+func (b *bitmapV) without(t itrie, key string) (itrie, int) {
+	if len(key) == 0 {
+		// we won't even check for the case of only 1 child in a bitmap -- it just
+		// shouldn't happen
+		return t.withoutValue()
+	}
+	return b.bitmap_.without_(t, key, 0)
+}
+func (b *bitmapKV) without(t itrie, key string) (itrie, int) {
+	crit, match := findcb(key, b.key_)
+	if crit < len(b.key_) {
+		return t, 0
+	}
 	if match {
 		// we won't even check for the case of only 1 child in a bitmap -- it just
 		// shouldn't happen
 		return t.withoutValue()
 	}
-
+	return b.bitmap_.without_(t, key, crit)
+}
+func (b *bitmap_) without_(t itrie, key string, crit int) (itrie, int) {
 	_, cb, rest := splitKey(key, crit)
 	w, bit := bitpos(uint(cb))
 	if !b.isset(w, bit) {
@@ -252,9 +378,9 @@ func (b *bitmap_t) without(t itrie, key string) (itrie, int) {
 	}
 	return b.modify(-1, i, n), less
 }
-func (b *bitmap_t) entryAt(key string) itrie {
+func (b *bitmapKV) entryAt(key string) itrie {
 	crit, match := findcb(key, b.key_)
-	if match && b.full { return b }
+	if match { return b }
 	if crit >= len(key) { return nil }
 	_, cb, rest := splitKey(key, crit)
 	w, bit := bitpos(uint(cb))
@@ -264,16 +390,56 @@ func (b *bitmap_t) entryAt(key string) itrie {
 	}
 	return nil
 }
-func (b *bitmap_t) foreach(prefix string, f func(string, Value)) {
-	prefix += b.key_
-	if b.full {
-		f(prefix, b.val_)
+func (b *bitmapV) entryAt(key string) itrie {
+	if len(key) == 0 { return b }
+	_, cb, rest := splitKey(key, 0)
+	w, bit := bitpos(uint(cb))
+	if b.isset(w, bit) {
+		index := b.indexOf(w, bit)
+		return b.sub[index].entryAt(rest)
 	}
+	return nil
+}
+func (b *bitmapK) entryAt(key string) itrie {
+	crit, _ := findcb(key, b.key_)
+	if crit >= len(key) { return nil }
+	_, cb, rest := splitKey(key, crit)
+	w, bit := bitpos(uint(cb))
+	if b.isset(w, bit) {
+		index := b.indexOf(w, bit)
+		return b.sub[index].entryAt(rest)
+	}
+	return nil
+}
+func (b *bitmap_) entryAt(key string) itrie {
+	if len(key) == 0 { return nil }
+	_, cb, rest := splitKey(key, 0)
+	w, bit := bitpos(uint(cb))
+	if b.isset(w, bit) {
+		index := b.indexOf(w, bit)
+		return b.sub[index].entryAt(rest)
+	}
+	return nil
+}
+func (b *bitmapKV) foreach(prefix string, f func(string, Value)) {
+	prefix += b.key_
+	f(prefix, b.val_)
+	b.bitmap_.foreach(prefix, f)
+}
+func (b *bitmapV) foreach(prefix string, f func(string, Value)) {
+	f(prefix, b.val_)
+	b.bitmap_.foreach(prefix, f)
+}
+func (b *bitmapK) foreach(prefix string, f func(string, Value)) {
+	prefix += b.key_
+	b.bitmap_.foreach(prefix, f)
+}
+func (b *bitmap_) foreach(prefix string, f func(string, Value)) {
 	b.withsubs(0, 256, func(cb byte, t itrie) {
 		t.foreach(prefix + string(cb), f)
 	})
 }
-func (b *bitmap_t) withsubs(start, end uint, f func(byte, itrie)) {
+func (b *bitmap_) withsubs(start, end uint, f func(byte, itrie)) {
 	sw, sbit := bitpos(start); sw = min(sw, len(b.bm))
 	index := b.indexOf(sw, sbit)
 	ew, ebit := bitpos(end); ew = min(ew, len(b.bm))
@@ -296,13 +462,10 @@ func (b *bitmap_t) withsubs(start, end uint, f func(byte, itrie)) {
 		}
 	}
 }
-func (b *bitmap_t) key() string { return b.key_ }
-func (b *bitmap_t) hasVal() bool { return b.full }
-func (b *bitmap_t) val() Value { return b.val_ }
-func (b *bitmap_t) count() int { return b.count_ }
-func (b *bitmap_t) occupied() int { return len(b.sub) }
-func (b *bitmap_t) expanse() expanse_t { return expanse(b.min(), b.max()) }
-func (b *bitmap_t) expanseWithout(cb byte) expanse_t {
+func (b *bitmap_) count() int { return b.count_ }
+func (b *bitmap_) occupied() int { return len(b.sub) }
+func (b *bitmap_) expanse() expanse_t { return expanse(b.min(), b.max()) }
+func (b *bitmap_) expanseWithout(cb byte) expanse_t {
 	e := b.expanse()
 	if cb == e.low {
 		e.low = b.firstAfter(cb)

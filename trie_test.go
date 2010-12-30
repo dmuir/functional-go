@@ -4,9 +4,11 @@ import (
 	"testing"
 	"testing/quick"
 	"fmt"
+	"os"
 	"rand"
 	"reflect"
 	"runtime"
+	"runtime/pprof"
 )
 
 func slowcount(bits uint64) int {
@@ -60,7 +62,7 @@ func BenchmarkReversebits(b *testing.B) {
 }
 
 func BenchmarkMinbit(b *testing.B) {
-	var bm bitmap_t
+	var bm bitmap_
 	bm.bm[3] = 0x0000000080000000
 	for i := 0; i < b.N; i++ {
 		_ = bm.min()
@@ -68,7 +70,7 @@ func BenchmarkMinbit(b *testing.B) {
 }
 
 func BenchmarkMaxbit(b *testing.B) {
-	var bm bitmap_t
+	var bm bitmap_
 	bm.bm[0] = 0x0000000080000000
 	for i := 0; i < b.N; i++ {
 		_ = bm.max()
@@ -94,7 +96,7 @@ func TestReversebits(t *testing.T) {
 }
 
 func TestMinbit(t *testing.T) {
-	var b bitmap_t
+	var b bitmap_
 	b.bm[0] = 0x1
 	if c := b.min(); c != 0 {
 		t.Errorf("TestMinbit: %d != 0", c)
@@ -115,7 +117,7 @@ func TestMinbit(t *testing.T) {
 }
 
 func TestMaxbit(t *testing.T) {
-	var b bitmap_t
+	var b bitmap_
 	b.bm[0] = 0x1
 	if c:= b.max(); c != 0 {
 		t.Errorf("TestMaxbit: %d != 0", c)
@@ -471,7 +473,10 @@ func TestPrintSizes(t *testing.T) {
 	fmt.Printf("sizeof(spanK): %d\n", reflect.Typeof(spanK{}).Size())
 	fmt.Printf("sizeof(spanV): %d\n", reflect.Typeof(spanV{}).Size())
 	fmt.Printf("sizeof(spanKV): %d\n", reflect.Typeof(spanKV{}).Size())
-	fmt.Printf("sizeof(bitmap_t): %d\n", reflect.Typeof(bitmap_t{}).Size())
+	fmt.Printf("sizeof(bitmap_): %d\n", reflect.Typeof(bitmap_{}).Size())
+	fmt.Printf("sizeof(bitmapK): %d\n", reflect.Typeof(bitmapK{}).Size())
+	fmt.Printf("sizeof(bitmapV): %d\n", reflect.Typeof(bitmapV{}).Size())
+	fmt.Printf("sizeof(bitmapKV): %d\n", reflect.Typeof(bitmapKV{}).Size())
 }
 func TestRandomAssocStats(t *testing.T) {
 	const num = 1000000
@@ -506,6 +511,12 @@ func TestRandomAssocStats(t *testing.T) {
 	runtime.GC()
 	snapshotGC()
 	d = d.Assoc(key, val)
+	f, err := os.Open("mem-pre-gc.pprof", os.O_WRONLY|os.O_CREAT, 0777)
+	if err == nil {
+		pprof.WriteCompleteHeapProfile(f)
+	} else {
+		fmt.Println(err.String())
+	}
 	runtime.GC()
 	fmt.Printf("Incremental Cumulative Stats...\n")
 	PrintStats(Cumulative)

@@ -44,20 +44,10 @@ func GetStats(i IDict) Stats {
 			case *spanK: stats[kSpanK]++
 			case *spanV: stats[kSpanV]++
 			case *spanKV: stats[kSpanKV]++
-			case *bitmap_t: 
-				if len(n.key_) > 0 {
-					if n.full {
-						stats[kBitmapKV]++
-					} else {
-						stats[kBitmapK]++
-					}
-				} else {
-					if n.full {
-						stats[kBitmapV]++
-					} else {
-						stats[kBitmap_]++
-					}
-				}
+			case *bitmap_: stats[kBitmap_]++
+			case *bitmapK: stats[kBitmapK]++
+			case *bitmapV: stats[kBitmapV]++
+			case *bitmapKV: stats[kBitmapKV]++
 			}
 			t.withsubs(0, 256, collect)
 		}
@@ -100,10 +90,10 @@ func PrintStats(stats Stats) {
 		reflect.Typeof(spanK{}).Size(),
 		reflect.Typeof(spanV{}).Size(),
 		reflect.Typeof(spanKV{}).Size(),
-		reflect.Typeof(bitmap_t{}).Size(),
-		reflect.Typeof(bitmap_t{}).Size(),
-		reflect.Typeof(bitmap_t{}).Size(),
-		reflect.Typeof(bitmap_t{}).Size(),
+		reflect.Typeof(bitmap_{}).Size(),
+		reflect.Typeof(bitmapK{}).Size(),
+		reflect.Typeof(bitmapV{}).Size(),
+		reflect.Typeof(bitmapKV{}).Size(),
 	}
 	for i, v := range stats {
 		fmt.Printf("%s: %d (%d)\n", statNames[i], v, uintptr(v)*sizes[i])
