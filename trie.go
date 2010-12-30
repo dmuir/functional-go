@@ -2,6 +2,7 @@ package immutable
 
 import (
 	"fmt"
+	"reflect"
 )
 
 const (
@@ -88,9 +89,24 @@ func PrintStats(stats Stats) {
 		"bitmapV",
 		"bitmapKV",
 	}
-
+	sizes := [numVariants]uintptr{
+		reflect.Typeof(leafV{}).Size(),
+		reflect.Typeof(leafKV{}).Size(),
+		reflect.Typeof(bag_{}).Size(),
+		reflect.Typeof(bagK{}).Size(),
+		reflect.Typeof(bagV{}).Size(),
+		reflect.Typeof(bagKV{}).Size(),
+		reflect.Typeof(span_{}).Size(),
+		reflect.Typeof(spanK{}).Size(),
+		reflect.Typeof(spanV{}).Size(),
+		reflect.Typeof(spanKV{}).Size(),
+		reflect.Typeof(bitmap_t{}).Size(),
+		reflect.Typeof(bitmap_t{}).Size(),
+		reflect.Typeof(bitmap_t{}).Size(),
+		reflect.Typeof(bitmap_t{}).Size(),
+	}
 	for i, v := range stats {
-		fmt.Printf("%s: %d\n", statNames[i], v)
+		fmt.Printf("%s: %d (%d)\n", statNames[i], v, uintptr(v)*sizes[i])
 	}
 }	
 const maxBagSize = 7
@@ -104,6 +120,7 @@ func str(s string) string {
 	// of work for the GC.
 	bytes := []byte(s)
 	return string(bytes)
+	//return s
 }
 
 func abs(x int) int {

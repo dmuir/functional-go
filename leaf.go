@@ -17,7 +17,7 @@ func leaf(key string, val Value) itrie {
 	if len(key) > 0 {
 		Cumulative[kLeafKV]++
 		l := new(leafKV)
-		l.key_ = key; l.val_ = val
+		l.key_ = str(key); l.val_ = val
 		return l
 	}
 	Cumulative[kLeafV]++

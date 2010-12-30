@@ -107,7 +107,7 @@ func makeBitmap(size int, key string, val Value, full bool) *bitmap_t {
 	} else {
 		if full { Cumulative[kBitmapV]++ } else { Cumulative[kBitmap_]++ }
 	}
-	bm := new(bitmap_t); bm.key_ = key; bm.val_ = val; bm.full = full
+	bm := new(bitmap_t); bm.key_ = str(key); bm.val_ = val; bm.full = full
 	bm.sub = make([]itrie, size)
 	return bm
 }

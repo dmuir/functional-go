@@ -32,12 +32,12 @@ func makeSpan(e expanse_t, key string, val Value, full bool) (s *span_, t itrie)
 		if full {
 			Cumulative[kSpanKV]++
 			n := new(spanKV)
-			n.key_ = key; n.val_ = val; n.count_ = 1
+			n.key_ = str(key); n.val_ = val; n.count_ = 1
 			s, t = &n.span_, n
 		} else {
 			Cumulative[kSpanK]++
 			n := new(spanK)
-			n.key_ = key
+			n.key_ = str(key)
 			s, t = &n.span_, n
 		}
 	} else {
@@ -94,31 +94,37 @@ func (s *span_) copy(t *span_) {
 }
 func (s *span_) cloneWithKey(key string) itrie {
 	n := new(spanK)
+	Cumulative[kSpanK]++
 	n.span_ = *s; n.key_ = str(key)
 	return n
 }
 func (s *spanV) cloneWithKey(key string) itrie {
 	n := new(spanKV)
+	Cumulative[kSpanKV]++
 	n.span_ = s.span_; n.key_ = str(key); n.val_ = s.val_
 	return n
 }
 func (s *spanKV) cloneWithKey(key string) itrie {
 	n := new(spanKV)
+	Cumulative[kSpanKV]++
 	n.span_ = s.span_; n.key_ = str(key); n.val_ = s.val_
 	return n
 }
 func (s *span_) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(spanKV)
+	Cumulative[kSpanKV]++
 	n.span_ = *s; n.key_ = str(key); n.val_ = val
 	return n, 1
 }
 func (s *spanV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(spanKV)
+	Cumulative[kSpanKV]++
 	n.span_ = s.span_; n.key_ = str(key); n.val_ = val
 	return n, 0
 }
 func (s *spanKV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(spanKV)
+	Cumulative[kSpanKV]++
 	n.span_ = s.span_; n.key_ = str(key); n.val_ = val
 	return n, 0
 }
@@ -173,23 +179,27 @@ func (n *span_) with_(s *span_, e expanse_t, cb byte, key string, val Value) int
 }
 func (s *span_) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
 	n := new(span_)
+	Cumulative[kSpan_]++
 	added := n.with_(s, e, cb, key, val)
 	return n, added
 }
 func (s *spanK) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
 	n := new(spanK)
+	Cumulative[kSpanK]++
 	n.key_ = s.key_
 	added := n.with_(&s.span_, e, cb, key, val)
 	return n, added
 }
 func (s *spanV) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
 	n := new(spanV)
+	Cumulative[kSpanV]++
 	n.val_ = s.val_
 	added := n.with_(&s.span_, e, cb, key, val)
 	return n, added
 }
 func (s *spanKV) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
 	n := new(spanKV)
+	Cumulative[kSpanKV]++
 	n.key_ = s.key_; n.val_ = s.val_
 	added := n.with_(&s.span_, e, cb, key, val)
 	return n, added

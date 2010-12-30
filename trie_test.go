@@ -436,10 +436,6 @@ func printGC() {
 }	
 	
 func TestRandomAssoc(t *testing.T) {
-	runtime.GC()
-	ResetCumulativeStats()
-	snapshotGC()
-
 	d := Dict()
 	m := map[string]int{}
 
@@ -461,6 +457,39 @@ func TestRandomAssoc(t *testing.T) {
 			t.Errorf("Expected %d at %s, got %d", v, k, vt)
 		}
 	}
+}
+
+func TestPrintSizes(t *testing.T) {
+	fmt.Printf("Sizes of internal structures.\n")
+	fmt.Printf("sizeof(leafV): %d\n", reflect.Typeof(leafV{}).Size())
+	fmt.Printf("sizeof(leafKV): %d\n", reflect.Typeof(leafKV{}).Size())
+	fmt.Printf("sizeof(bag_): %d\n", reflect.Typeof(bag_{}).Size())
+	fmt.Printf("sizeof(bagK): %d\n", reflect.Typeof(bagK{}).Size())
+	fmt.Printf("sizeof(bagV): %d\n", reflect.Typeof(bagV{}).Size())
+	fmt.Printf("sizeof(bagKV): %d\n", reflect.Typeof(bagKV{}).Size())
+	fmt.Printf("sizeof(span_): %d\n", reflect.Typeof(span_{}).Size())
+	fmt.Printf("sizeof(spanK): %d\n", reflect.Typeof(spanK{}).Size())
+	fmt.Printf("sizeof(spanV): %d\n", reflect.Typeof(spanV{}).Size())
+	fmt.Printf("sizeof(spanKV): %d\n", reflect.Typeof(spanKV{}).Size())
+	fmt.Printf("sizeof(bitmap_t): %d\n", reflect.Typeof(bitmap_t{}).Size())
+}
+func TestRandomAssocStats(t *testing.T) {
+	const num = 1000000
+	keys := make([]string, num)
+	values :=  make([]Value, num)
+	for i, _ := range keys {
+		keys[i] = randomKey()
+		values[i] = i
+	}
+	ResetCumulativeStats()
+	runtime.GC()
+	snapshotGC()
+
+	d := Dict()
+
+	for i, key := range keys {
+		d = d.Assoc(key, values[i])
+	}
 
 	fmt.Printf("Information for Dict...\n")
 	PrintStats(GetStats(d))
@@ -469,20 +498,33 @@ func TestRandomAssoc(t *testing.T) {
 	runtime.GC()
 	fmt.Println("Memory Info...")
 	printGC()
+
+	fmt.Println("And one more...")
+	key := randomKey()
+	var val Value = "foobar" 
+	ResetCumulativeStats()
+	runtime.GC()
+	snapshotGC()
+	d = d.Assoc(key, val)
+	runtime.GC()
+	fmt.Printf("Incremental Cumulative Stats...\n")
+	PrintStats(Cumulative)
+	fmt.Println("Memory Info...")
+	printGC()
 }
 	
-func BenchmarkKeys(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		_ = randomKey()
-	}
-}
-
 func BenchmarkAssoc(b *testing.B) {
 	b.StopTimer()
+	keys := make([]string, b.N)
+	values :=  make([]Value, b.N)
+	for i, _ := range keys {
+		keys[i] = randomKey()
+		values[i] = i
+	}
 	runtime.GC()
 	b.StartTimer()
-	m := Dict()
-	for i := 0; i < b.N; i++ {
-		m = m.Assoc(randomKey(), i)
+	d := Dict()
+	for i, key := range keys {
+		d = d.Assoc(key, values[i])
 	}
 }

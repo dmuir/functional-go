@@ -164,31 +164,37 @@ func (b *bagKV) modify(incr, i int, sub itrie) itrie {
 }
 func (b *bag_) cloneWithKey(key string) itrie {
 	n := new(bagK)
+	Cumulative[kBagK]++
 	n.bag_ = *b; n.key_ = str(key)
 	return n
 }
 func (b *bagV) cloneWithKey(key string) itrie {
 	n := new(bagKV)
+	Cumulative[kBagKV]++
 	n.bag_ = b.bag_; n.key_ = str(key); n.val_ = b.val_
 	return n
 }
 func (b *bagKV) cloneWithKey(key string) itrie {
 	n := new(bagKV)
+	Cumulative[kBagKV]++
 	n.bag_ = b.bag_; n.key_ = str(key); n.val_ = b.val_
 	return n
 }	
 func (b *bag_) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(bagKV)
+	Cumulative[kBagKV]++
 	n.bag_ = *b; n.key_ = str(key); n.val_ = val; n.count_++
 	return n, 1
 }
 func (b *bagV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(bagKV)
+	Cumulative[kBagKV]++
 	n.bag_ = b.bag_; n.key_ = str(key); n.val_ = val
 	return n, 0
 }
 func (b *bagKV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	n := new(bagKV)
+	Cumulative[kBagKV]++
 	n.bag_ = b.bag_; n.key_ = str(key); n.val_ = val
 	return n, 0
 }
@@ -229,23 +235,27 @@ func (n *bag_) with_(b *bag_, size, i int, cb byte, key string, val Value) int {
 }
 func (b *bag_) with(size, i int, cb byte, key string, val Value) (itrie, int) {
 	n := new(bag_)
+	Cumulative[kBag_]++
 	added := n.with_(b, size, i, cb, key, val)
 	return n, added
 }
 func (b *bagK) with(size, i int, cb byte, key string, val Value) (itrie, int) {
 	n := new(bagK)
+	Cumulative[kBagK]++
 	n.key_ = b.key_
 	added := n.with_(&b.bag_, size, i, cb, key, val)
 	return n, added
 }
 func (b *bagV) with(size, i int, cb byte, key string, val Value) (itrie, int) {
 	n := new(bagV)
+	Cumulative[kBagV]++
 	n.val_ = b.val_
 	added := n.with_(&b.bag_, size, i, cb, key, val)
 	return n, added
 }
 func (b *bagKV) with(size, i int, cb byte, key string, val Value) (itrie, int) {
 	n := new(bagKV)
+	Cumulative[kBagKV]++
 	n.key_ = b.key_; n.val_ = b.val_
 	added := n.with_(&b.bag_, size, i, cb, key, val)
 	return n, added
