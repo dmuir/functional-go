@@ -37,8 +37,12 @@ func (l *leafV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 func (l *leafV) withoutValue() (itrie, int) {
 	panic("Can't have a leaf without a value")
 }
-func (l *leafV) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
-	return bag1(prefix, l.val(), true, cb, leaf(rest, val)), 1
+func (l *leafV) subAt(cb byte) itrie { return nil }
+func (l *leafV) with(incr int, cb byte, r itrie) itrie {
+	return bag1("", l.val_, true, cb, r)
+}
+func (l *leafKV) with(incr int, cb byte, r itrie) itrie {
+	return bag1(l.key_, l.val_, true, cb, r)
 }
 func (l *leafV) without(t itrie, key string) (itrie, int) {
 	if len(key) == 0 { return nil, 1 }

@@ -210,55 +210,54 @@ func (b *bagKV) withoutValue() (itrie, int) {
 	n.key_ = b.key_; n.bag_ = b.bag_
 	return n, 1
 }
-func (n *bag_) with_(b *bag_, size, i int, cb byte, key string, val Value) int {
-	n.count_ = b.count_
+func (n *bag_) withBag(b *bag_, incr, size, i int, cb byte, r itrie) {
 	n.sub = make([]itrie, size)
 	if size > maxBagSize {
 		panic(fmt.Sprintf("Don't make bag's with more than %d elts.", maxBagSize))
 	}
 	copy(n.cb[:i], b.cb[:i])
 	copy(n.sub[:i], b.sub[:i])
-	src, dst, added := i, i, 0
-	if size == len(b.sub) {
-		// We're modifying an existing sub-trie
-		if cb != b.cb[i] { panic("We should be modifying a sub-trie") }
-		n.cb[dst] = cb
-		n.sub[dst], added = assoc(b.sub[src], key, val); dst++; src++
-	} else {
-		n.cb[dst] = cb
-		n.sub[dst], added = assoc(nil, key, val); dst++
-	}
+	src, dst := i, i
+	n.cb[dst] = cb; n.sub[dst] = r; dst++
+	if size == len(b.sub) { src++ }
 	copy(n.cb[dst:], b.cb[src:])
 	copy(n.sub[dst:], b.sub[src:])
-	n.count_ = b.count_ + added
-	return added
+	n.count_ = b.count_ + incr
 }
-func (b *bag_) with(size, i int, cb byte, key string, val Value) (itrie, int) {
+func (b *bag_) with(incr int, cb byte, r itrie) itrie {
+	t, size, i := b.maybeGrow(b, cb, r)
+	if t != nil { return t }
 	n := new(bag_)
 	Cumulative[kBag_]++
-	added := n.with_(b, size, i, cb, key, val)
-	return n, added
+	n.withBag(b, incr, size, i, cb, r)
+	return n
 }
-func (b *bagK) with(size, i int, cb byte, key string, val Value) (itrie, int) {
+func (b *bagK) with(incr int, cb byte, r itrie) itrie {
+	t, size, i := b.maybeGrow(b, cb, r)
+	if t != nil { return t }
 	n := new(bagK)
 	Cumulative[kBagK]++
 	n.key_ = b.key_
-	added := n.with_(&b.bag_, size, i, cb, key, val)
-	return n, added
+	n.withBag(&b.bag_, incr, size, i, cb, r)
+	return n
 }
-func (b *bagV) with(size, i int, cb byte, key string, val Value) (itrie, int) {
+func (b *bagV) with(incr int, cb byte, r itrie) itrie {
+	t, size, i := b.maybeGrow(b, cb, r)
+	if t != nil { return t }
 	n := new(bagV)
 	Cumulative[kBagV]++
 	n.val_ = b.val_
-	added := n.with_(&b.bag_, size, i, cb, key, val)
-	return n, added
+	n.withBag(&b.bag_, incr, size, i, cb, r)
+	return n
 }
-func (b *bagKV) with(size, i int, cb byte, key string, val Value) (itrie, int) {
+func (b *bagKV) with(incr int, cb byte, r itrie) itrie {
+	t, size, i := b.maybeGrow(b, cb, r)
+	if t != nil { return t }
 	n := new(bagKV)
 	Cumulative[kBagKV]++
 	n.key_ = b.key_; n.val_ = b.val_
-	added := n.with_(&b.bag_, size, i, cb, key, val)
-	return n, added
+	n.withBag(&b.bag_, incr, size, i, cb, r)
+	return n
 }
 func (b *bag_) find(cb byte) (int, bool) {
 	// Even though it's sorted, since len <= 7, it's almost certainly not worth it to
@@ -269,31 +268,29 @@ func (b *bag_) find(cb byte) (int, bool) {
 	}
 	return len(b.sub), false
 }
-func (b *bag_) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
+func (b *bag_) subAt(cb byte) itrie {
+	i, found := b.find(cb)
+	if found { return b.sub[i] }
+	return nil
+}
+func (b *bag_) maybeGrow(t itrie, cb byte, r itrie) (itrie, int, int) {
 	i, found := b.find(cb)
 	size := len(b.sub)
 	if !found {
 		size++
-		// Determine whether we're a bag, span, or a bitmap
 		if size >= minSpanSize {
 			e := b.expanse().with(cb)
 			if spanOK(e, size) {
 				// Prefer a span, even if we're small enough to stay a bag
-				return span(t, e, cb, leaf(rest, val)), 1
+				return span(t, e, cb, r), size, i
 			}
 		}
 		if size > maxBagSize {
 			// Prefer a bitmap
-			return bitmap(t, cb, leaf(rest, val)), 1
+			return bitmap(t, cb, r), size, i
 		}
 	}
-	switch n := t.(type) {
-	case *bag_: return n.with(size, i, cb, rest, val)
-	case *bagK: return n.with(size, i, cb, rest, val)
-	case *bagV: return n.with(size, i, cb, rest, val)
-	case *bagKV: return n.with(size, i, cb, rest, val)
-	}
-	panic(fmt.Sprintf("unknown bag subtype: %T", t))
+	return nil, size, i
 }
 func (b *bag_) without(t itrie, key string) (itrie, int) {
 	return b.without_(t, key, 0)

@@ -1,7 +1,5 @@
 package immutable
 
-import "fmt"
-
 /*
  span_t
 
@@ -164,47 +162,57 @@ func (s *spanKV) withoutValue() (itrie, int) {
 	n.span_ = s.span_; n.key_ = s.key_; n.count_--
 	return n, 1
 }
-func (n *span_) with_(s *span_, e expanse_t, cb byte, key string, val Value) int {
+func (n *span_) withSpan(s *span_, incr int, e expanse_t, cb byte, r itrie) {
 	if e.low > s.start { panic("new start must be <= old start") }
 	if int(e.size) < len(s.sub) { panic("new size must be >= old size") }
-	n.start = e.low; n.count_ = s.count_; n.occupied_ = s.occupied_
+	n.start = e.low; n.count_ = s.count_ + incr; n.occupied_ = s.occupied_
 	n.sub = make([]itrie, int(e.size))
 	copy(n.sub[s.start - n.start:], s.sub)
-	i, added := int(cb - n.start), 0
-	o := n.sub[i]
-	n.sub[i], added = assoc(o, key, val)
-	n.count_ += added
+	i := int(cb - n.start)
+	o := n.sub[i]; n.sub[i] = r
 	if o == nil { n.occupied_++ }
-	return added
 }
-func (s *span_) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
+func (s *span_) with(incr int, cb byte, r itrie) itrie {
+	t, e := s.maybeGrow(s, cb, r)
+	if t != nil { return t }
 	n := new(span_)
 	Cumulative[kSpan_]++
-	added := n.with_(s, e, cb, key, val)
-	return n, added
+	n.withSpan(s, incr, e, cb, r)
+	return n
 }
-func (s *spanK) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
+func (s *spanK) with(incr int, cb byte, r itrie) itrie {
+	t, e := s.maybeGrow(s, cb, r)
+	if t != nil { return t }
 	n := new(spanK)
 	Cumulative[kSpanK]++
 	n.key_ = s.key_
-	added := n.with_(&s.span_, e, cb, key, val)
-	return n, added
+	n.withSpan(&s.span_, incr, e, cb, r)
+	return n
 }
-func (s *spanV) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
+func (s *spanV) with(incr int, cb byte, r itrie) itrie {
+	t, e := s.maybeGrow(s, cb, r)
+	if t != nil { return t }
 	n := new(spanV)
 	Cumulative[kSpanV]++
 	n.val_ = s.val_
-	added := n.with_(&s.span_, e, cb, key, val)
-	return n, added
+	n.withSpan(&s.span_, incr, e, cb, r)
+	return n
 }
-func (s *spanKV) with(e expanse_t, cb byte, key string, val Value) (itrie, int) {
+func (s *spanKV) with(incr int, cb byte, r itrie) itrie {
+	t, e := s.maybeGrow(s, cb, r)
+	if t != nil { return t }
 	n := new(spanKV)
 	Cumulative[kSpanKV]++
 	n.key_ = s.key_; n.val_ = s.val_
-	added := n.with_(&s.span_, e, cb, key, val)
-	return n, added
+	n.withSpan(&s.span_, incr, e, cb, r)
+	return n
 }
-func (s *span_) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
+func (s *span_) subAt(cb byte) itrie {
+	i := int(cb) - int(s.start)
+	if i < 0 || i >= len(s.sub) { return nil }
+	return s.sub[i]
+}
+func (s *span_) maybeGrow(t itrie, cb byte, r itrie) (itrie, expanse_t) {
 	// Update expanse
 	e0 := s.expanse()
 	e := e0.with(cb)
@@ -215,22 +223,14 @@ func (s *span_) assoc(t itrie, prefix string, cb byte, rest string, val Value) (
 		if !spanOK(e, count) {
 			// We're not a span.
 			if count <= maxBagSize {
-				return bag(t, cb, leaf(rest, val)), 1
+				return bag(t, cb, r), e
 			}
 			// Prefer a bitmap
-			return bitmap(t, cb, leaf(rest, val)), 1
+			return bitmap(t, cb, r), e
 		}
 	}
 	
-	// Prefer a span -- the code below handles the case of adding a new child, or
-	// overwriting an existing one.
-	switch n := t.(type) {
-	case *span_: return n.with(e, cb, rest, val)
-	case *spanK: return n.with(e, cb, rest, val)
-	case *spanV: return n.with(e, cb, rest, val)
-	case *spanKV: return n.with(e, cb, rest, val)
-	}
-	panic(fmt.Sprintf("unknown span subtype: %T", t))
+	return nil, e
 }
 func (s *span_) firstAfter(i int) byte {
 	i++

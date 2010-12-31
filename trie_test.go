@@ -199,6 +199,36 @@ func TestBag(t *testing.T) {
 	b3 := bagWithout(b1, e3, 'f')
 	checkTrie(b3, 3, expanse('e', 'b'), 3, t)
 }
+func TestBagWith(t *testing.T) {
+	b := bag2("", nil, false, '0', '1', leaf("00", 1), leaf("00", 2))
+	b1 := b.with(1, '2', leaf("00", 3))
+	if b.count() != 2 { t.Errorf("Expected b.count() == 2, got %d", b.count()) }
+	if b1.count() != 3 { t.Errorf("Expected b1.count() == 3, got %d", b1.count()) }
+	if e := b.entryAt("000"); e == nil { t.Error("Expected entry @ '000'")
+	} else {
+		if !e.hasVal() { t.Error("Expected entry @ '000' to have a value") }
+		if v, ok := e.val().(int); !ok || v != 1 {
+			t.Errorf("Expected v == 1, got %d", v) 
+		}
+	}
+	if e := b.entryAt("200"); e != nil { t.Error("Expected no entry @ '200'") }
+	if e := b1.entryAt("200"); e == nil { t.Error("Expected entry @ '200'")
+	} else {
+		if !e.hasVal() { t.Error("Expected entry @ '200' to have a value") }
+		if v, ok := e.val().(int); !ok || v != 3 {
+			t.Errorf("Expected v == 3, got %d", v) 
+		}
+	}
+	b2 := b1.with(0, '2', leaf("00", 4))
+	if e := b2.entryAt("200"); e == nil { t.Error("Expected entry @ '200'")
+	} else {
+		if !e.hasVal() { t.Error("Expected entry @ '200' to have a value") }
+		if v, ok := e.val().(int); !ok || v != 4 {
+			t.Errorf("Expected v == 4, got %d", v) 
+		}
+	}
+}
+
 func TestSpan(t *testing.T) {
 	check := 1
 	b := testBag(nil)
@@ -219,6 +249,37 @@ func TestSpan(t *testing.T) {
 	e3 := s2.expanseWithout('g')
 	s3 := spanWithout(s2, e3, 'g')
 	checkTrie(s3, 5, expanse('b', 'f'), check, t); check++
+}
+
+func TestSpanWith(t *testing.T) {
+	b := bag2("", nil, false, '0', '1', leaf("00", 1), leaf("00", 2))
+	s := span(b, b.expanse().with('2'), '2', leaf("00", 3))
+	s1 := s.with(1, '3', leaf("00", 5))
+	if s.count() != 3 { t.Errorf("Expected s.count() == 3, got %d", s.count()) }
+	if s1.count() != 4 { t.Errorf("Expected s1.count() == 4, got %d", s1.count()) }
+	if e := s.entryAt("000"); e == nil { t.Error("Expected entry @ '000'")
+	} else {
+		if !e.hasVal() { t.Error("Expected entry @ '000' to have a value") }
+		if v, ok := e.val().(int); !ok || v != 1 {
+			t.Errorf("Expected v == 1, got %d", v) 
+		}
+	}
+	if e := s.entryAt("300"); e != nil { t.Error("Expected no entry @ '300'") }
+	if e := s1.entryAt("300"); e == nil { t.Error("Expected entry @ '300'")
+	} else {
+		if !e.hasVal() { t.Error("Expected entry @ '300' to have a value") }
+		if v, ok := e.val().(int); !ok || v != 5 {
+			t.Errorf("Expected v == 3, got %d", v) 
+		}
+	}
+	s2 := s1.with(0, '2', leaf("00", 4))
+	if e := s2.entryAt("200"); e == nil { t.Error("Expected entry @ '200'")
+	} else {
+		if !e.hasVal() { t.Error("Expected entry @ '200' to have a value") }
+		if v, ok := e.val().(int); !ok || v != 4 {
+			t.Errorf("Expected v == 4, got %d", v) 
+		}
+	}
 }
 
 func printExpanse(e expanse_t) {
@@ -249,6 +310,37 @@ func TestBitmap(t *testing.T) {
 	checkTrie(bm3, 5, expanse('b', 'f'), check, t); check++
 }
 	
+func TestBitmapWith(t *testing.T) {
+	b := bag2("", nil, false, '0', '1', leaf("00", 1), leaf("00", 2))
+	bm := bitmap(b, '2', leaf("00", 3))
+	bm1 := bm.with(1, '3', leaf("00", 5))
+	if bm.count() != 3 { t.Errorf("Expected bm.count() == 3, got %d", bm.count()) }
+	if bm1.count() != 4 { t.Errorf("Expected bm1.count() == 4, got %d", bm1.count()) }
+	if e := bm.entryAt("000"); e == nil { t.Error("Expected entry @ '000'")
+	} else {
+		if !e.hasVal() { t.Error("Expected entry @ '000' to have a value") }
+		if v, ok := e.val().(int); !ok || v != 1 {
+			t.Errorf("Expected v == 1, got %d", v) 
+		}
+	}
+	if e := bm.entryAt("300"); e != nil { t.Error("Expected no entry @ '300'") }
+	if e := bm1.entryAt("300"); e == nil { t.Error("Expected entry @ '300'")
+	} else {
+		if !e.hasVal() { t.Error("Expected entry @ '300' to have a value") }
+		if v, ok := e.val().(int); !ok || v != 5 {
+			t.Errorf("Expected v == 3, got %d", v) 
+		}
+	}
+	bm2 := bm1.with(0, '2', leaf("00", 4))
+	if e := bm2.entryAt("200"); e == nil { t.Error("Expected entry @ '200'")
+	} else {
+		if !e.hasVal() { t.Error("Expected entry @ '200' to have a value") }
+		if v, ok := e.val().(int); !ok || v != 4 {
+			t.Errorf("Expected v == 4, got %d", v) 
+		}
+	}
+}
+
 func TestEmptyTrie(t *testing.T) {
 	m := Dict()
 	if m.Count() != 0 {
@@ -371,6 +463,7 @@ func TestIterTrie(t *testing.T) {
 			}
 		}
 	}
+
 	count := 0
 	m.Foreach(func(key string, val Value) {
 		i := val.(int)
@@ -386,6 +479,7 @@ func TestIterTrie(t *testing.T) {
 	if count != m.Count() {
 		t.Errorf("TestIter: only iterated %d of %d items via Foreach.", count, m.Count())
 	}
+
 	count = 0
 	for item := range m.Iter() {
 		if item.val.(int) != 255 - count {
@@ -402,7 +496,6 @@ func TestIterTrie(t *testing.T) {
 		t.Errorf("TestIter: only iterated %d of %d items via Iter.", count, m.Count())
 	}
 }
-		
 func randomKey() string {
 	r := rand.Int63n(1000000000) + 10000000000
 	return fmt.Sprintf("%x", r)
@@ -523,7 +616,7 @@ func TestRandomAssocStats(t *testing.T) {
 	fmt.Println("Memory Info...")
 	printGC()
 }
-	
+
 func BenchmarkAssoc(b *testing.B) {
 	b.StopTimer()
 	keys := make([]string, b.N)

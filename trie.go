@@ -193,27 +193,56 @@ func critbytes(first byte, rest ... byte) string {
 	return string(first) + string(rest)
 }
 
+// the max depth is the max number of critical bytes -- the minimum size for depth 32 is 2^32
+const maxDepth = 32
 
 func assoc(t itrie, key string, val Value) (itrie, int) {
-	if t != nil {
-		crit, match := findcb(key, t.key())
+	var tries [maxDepth]itrie
+	var cbs [maxDepth]byte
+	path := 0
+	var r itrie
+	var added int
+
+	for {
+		if t == nil {
+			r, added = leaf(key, val), 1
+			break
+		}
+		key_ := t.key()
+		crit, match := findcb(key, key_)
 		if match {
-			return t.cloneWithKeyValue(key, val)
+			r, added = t.cloneWithKeyValue(key, val)
+			break
 		}
 		
 		prefix, cb, rest := splitKey(key, crit)
-		_, _cb, _rest := splitKey(t.key(), crit)
+		_, cb_, rest_ := splitKey(key_, crit)
 
-		if crit < len(t.key()) {
+		if crit < len(key_) {
+			added = 1
 			if crit == len(key) {
-				return bag1(prefix, val, true, _cb, t.cloneWithKey(_rest)), 1
+				r = bag1(prefix, val, true, cb_, t.cloneWithKey(rest_))
+			} else {
+				r = bag2(prefix, nil, false, cb, cb_,
+					leaf(rest, val), t.cloneWithKey(rest_))
 			}
-			return bag2(prefix, nil, false, cb, _cb,
-				leaf(rest, val), t.cloneWithKey(_rest)), 1
+			break
 		}
-		return t.assoc(t, prefix, cb, rest, val)
+		tries[path] = t
+		cbs[path] = cb
+		t = t.subAt(cb)
+		key = rest
+		path++
 	}
-	return leaf(key, val), 1
+	// At this point, we have the bottom-most sub trie in r, and tries/cbs has the
+	// information about the changes we need to build up the tree
+	for path > 0 {
+		path--
+		t := tries[path]
+		cb := cbs[path]
+		r = t.with(added, cb, r)
+	}
+	return r, added
 }
 
 func without(t itrie, key string) (itrie, int) {
@@ -232,10 +261,11 @@ type itrie interface {
 	key() string
 	hasVal() bool
 	val() Value
+	subAt(cb byte) itrie
+	with(incr int, cb byte, r itrie) itrie
 	modify(incr, i int, t itrie) itrie
 	cloneWithKey(string) itrie
 	cloneWithKeyValue(string, Value) (itrie, int)
-	assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int)
 	without(t itrie, key string) (itrie, int)
 	withoutValue() (itrie, int)
 	entryAt(string) itrie

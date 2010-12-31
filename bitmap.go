@@ -1,7 +1,5 @@
 package immutable
 
-import "fmt"
-
 /*
  bitmap_t
 
@@ -250,73 +248,74 @@ func (b *bitmapKV) withoutValue() (itrie, int) {
 	n.bitmap_ = b.bitmap_; n.key_ = b.key_
 	return n, 1
 }
-func (n *bitmap_) with_(b *bitmap_, cb byte, key string, val Value) int {
-	*n = *b
+func (n *bitmap_) withBitmap(b *bitmap_, incr int, cb byte, r itrie) {
+	*n = *b; n.count_ = b.count_ + incr
 	w, bit := bitpos(uint(cb))
 	size := len(b.sub)
-	if !b.isset(w, bit) { size++ }
-	n.sub = make([]itrie, size)
+	exists := b.isset(w, bit)
+	if !exists { size++ }
 	i := b.indexOf(w, bit)
+	n.sub = make([]itrie, size)
 	copy(n.sub[:i], b.sub[:i])
-	src, dst, added := i, i, 0
-	if b.isset(w, bit) {
-		// replace existing sub-trie
-		n.sub[dst], added = assoc(b.sub[src], key, val); dst++; src++
-	} else {
-		n.sub[dst], added = assoc(nil, key, val); n.setbit(w, bit); dst++
-	}
+	src, dst := i, i
+	n.sub[dst] = r; dst++; if exists { src++ } else { n.setbit(w, bit) }
 	copy(n.sub[dst:], b.sub[src:])
-	n.count_ = b.count_ + added
-	return added
 }
-func (b *bitmap_) with(cb byte, key string, val Value) (itrie, int) {
+func (b *bitmap_) with(incr int, cb byte, r itrie) itrie {
+	t := b.maybeGrow(b, cb, r)
+	if t != nil { return t }
 	n := new(bitmap_)
 	Cumulative[kBitmap_]++
-	added := n.with_(b, cb, key, val)
-	return n, added
+	n.withBitmap(b, incr, cb, r)
+	return n
 }
-func (b *bitmapK) with(cb byte, key string, val Value) (itrie, int) {
+func (b *bitmapK) with(incr int, cb byte, r itrie) itrie {
+	t := b.maybeGrow(b, cb, r)
+	if t != nil { return t }
 	n := new(bitmapK)
 	Cumulative[kBitmap_]++
 	n.key_ = b.key_
-	added := n.with_(&b.bitmap_, cb, key, val)
-	return n, added
+	n.withBitmap(&b.bitmap_, incr, cb, r)
+	return n
 }
-func (b *bitmapV) with(cb byte, key string, val Value) (itrie, int) {
+func (b *bitmapV) with(incr int, cb byte, r itrie) itrie {
+	t := b.maybeGrow(b, cb, r)
+	if t != nil { return t }
 	n := new(bitmapV)
 	Cumulative[kBitmap_]++
 	n.val_ = b.val_
-	added := n.with_(&b.bitmap_, cb, key, val)
-	return n, added
+	n.withBitmap(&b.bitmap_, incr, cb, r)
+	return n
 }
-func (b *bitmapKV) with(cb byte, key string, val Value) (itrie, int) {
+func (b *bitmapKV) with(incr int, cb byte, r itrie) itrie {
+	t := b.maybeGrow(b, cb, r)
+	if t != nil { return t }
 	n := new(bitmapKV)
 	Cumulative[kBitmap_]++
 	n.key_ = b.key_; n.val_ = b.val_
-	added := n.with_(&b.bitmap_, cb, key, val)
-	return n, added
+	n.withBitmap(&b.bitmap_, incr, cb, r)
+	return n
 }
-func (b *bitmap_) assoc(t itrie, prefix string, cb byte, rest string, val Value) (itrie, int) {
+func (b *bitmap_) subAt(cb byte) itrie {
+	w, bit := bitpos(uint(cb))
+	if !b.isset(w, bit) { return nil }
+	return b.sub[b.indexOf(w, bit)]
+}
+func (b *bitmap_) maybeGrow(t itrie, cb byte, r itrie) itrie {
 	// Figure out if we stay a bitmap or if we can become a span
 	// we know we're too big to be a bag
 	w, bit := bitpos(uint(cb))
-	replace := b.isset(w, bit)
-	if !replace {
+	exists := b.isset(w, bit)
+	if !exists {
 		e := b.expanse().with(cb)
 		count := len(b.sub)
 		if spanOK(e, count+1) {
 			// We can be a span
-			return span(t, e, cb, leaf(rest, val)), 1
+			return span(t, e, cb, r)
 		}
 	}
 	// still a bitmap
-	switch n := t.(type) {
-	case *bitmap_: return n.with(cb, rest, val)
-	case *bitmapK: return n.with(cb, rest, val)
-	case *bitmapV: return n.with(cb, rest, val)
-	case *bitmapKV: return n.with(cb, rest, val)
-	}
-	panic(fmt.Sprintf("unknown bitmap subtype: %T", t))
+	return nil
 }
 func (b *bitmap_) without(t itrie, key string) (itrie, int) {
 	return b.without_(t, key, 0)
