@@ -368,38 +368,6 @@ func (b *bag_) without_(t itrie, key string, crit int) (itrie, int) {
 	}
 	return t.modify(-1, i, n), less
 }
-func (b *bagKV) entryAt(key string) itrie {
-	crit, match := findcb(key, b.key_)
-	if match { return b }
-	if crit >= len(key) { return nil }
-	_, cb, rest := splitKey(key, crit)
-	i, found := b.find(cb)
-	if !found { return nil }
-	return b.sub[i].entryAt(rest)
-}
-func (b *bagV) entryAt(key string) itrie {
-	if len(key) == 0 { return b }
-	_, cb, rest := splitKey(key, 0)
-	i, found := b.find(cb)
-	if !found { return nil }
-	return b.sub[i].entryAt(rest)
-}
-func (b *bagK) entryAt(key string) itrie {
-	crit, match := findcb(key, b.key_)
-	if match { return nil }
-	if crit >= len(key) { return nil }
-	_, cb, rest := splitKey(key, crit)
-	i, found := b.find(cb)
-	if !found { return nil }
-	return b.sub[i].entryAt(rest)
-}
-func (b *bag_) entryAt(key string) itrie {
-	if len(key) == 0 { return nil }
-	_, cb, rest := splitKey(key, 0)
-	i, found := b.find(cb)
-	if !found { return nil }
-	return b.sub[i].entryAt(rest)
-}
 func (b *bagKV) foreach(prefix string, f func(key string, val Value)) {
 	prefix += b.key_
 	f(prefix, b.val_)

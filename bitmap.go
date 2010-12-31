@@ -377,49 +377,6 @@ func (b *bitmap_) without_(t itrie, key string, crit int) (itrie, int) {
 	}
 	return b.modify(-1, i, n), less
 }
-func (b *bitmapKV) entryAt(key string) itrie {
-	crit, match := findcb(key, b.key_)
-	if match { return b }
-	if crit >= len(key) { return nil }
-	_, cb, rest := splitKey(key, crit)
-	w, bit := bitpos(uint(cb))
-	if b.isset(w, bit) {
-		index := b.indexOf(w, bit)
-		return b.sub[index].entryAt(rest)
-	}
-	return nil
-}
-func (b *bitmapV) entryAt(key string) itrie {
-	if len(key) == 0 { return b }
-	_, cb, rest := splitKey(key, 0)
-	w, bit := bitpos(uint(cb))
-	if b.isset(w, bit) {
-		index := b.indexOf(w, bit)
-		return b.sub[index].entryAt(rest)
-	}
-	return nil
-}
-func (b *bitmapK) entryAt(key string) itrie {
-	crit, _ := findcb(key, b.key_)
-	if crit >= len(key) { return nil }
-	_, cb, rest := splitKey(key, crit)
-	w, bit := bitpos(uint(cb))
-	if b.isset(w, bit) {
-		index := b.indexOf(w, bit)
-		return b.sub[index].entryAt(rest)
-	}
-	return nil
-}
-func (b *bitmap_) entryAt(key string) itrie {
-	if len(key) == 0 { return nil }
-	_, cb, rest := splitKey(key, 0)
-	w, bit := bitpos(uint(cb))
-	if b.isset(w, bit) {
-		index := b.indexOf(w, bit)
-		return b.sub[index].entryAt(rest)
-	}
-	return nil
-}
 func (b *bitmapKV) foreach(prefix string, f func(string, Value)) {
 	prefix += b.key_
 	f(prefix, b.val_)

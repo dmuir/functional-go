@@ -252,6 +252,18 @@ func without(t itrie, key string) (itrie, int) {
 	return nil, 0
 }
 
+func entryAt(t itrie, key string) itrie {
+	for t != nil {
+		crit, match := findcb(key, t.key())
+		if match && t.hasVal() { return t }
+		if crit >= len(key) { return nil }
+		_, cb, rest := splitKey(key, crit)
+		t = t.subAt(cb)
+		key = rest
+	}
+	return t
+}
+
 /*
  itrie.
 
@@ -268,7 +280,6 @@ type itrie interface {
 	cloneWithKeyValue(string, Value) (itrie, int)
 	without(t itrie, key string) (itrie, int)
 	withoutValue() (itrie, int)
-	entryAt(string) itrie
 	count() int
 	occupied() int
 	expanse() expanse_t
@@ -294,18 +305,13 @@ func (d dict) Without(key string) IDict {
 	return dict{t}
 }
 func (d dict) Contains(key string) bool { 
-	if d.t != nil {
-		e := d.t.entryAt(key)
-		return e != nil
-	}
-	return false
+	e := entryAt(d.t, key)
+	return e != nil
 }
-func (d dict) ValueAt(key string) Value {
-	if d.t != nil {
-		e := d.t.entryAt(key)
-		if e != nil { return e.val() }
-	}
-	panic(fmt.Sprintf("no value at: %s", key))
+func (d dict) ValueAt(key string) (Value, bool) {
+	e := entryAt(d.t, key)
+	if e != nil { return e.val(), true }
+	return nil, false
 }
 func (d dict) Count() int {
 	if d.t != nil {

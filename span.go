@@ -363,45 +363,6 @@ func (s *span_) without_(t itrie, key string, crit int) (itrie, int) {
 	}
 	return t.modify(-1, int(i), n), less
 }
-func (s *span_) entryAt(key string) itrie {
-	if len(key) == 0 { return nil }
-	_, cb, rest := splitKey(key, 0)
-	i := int(cb) - int(s.start)
-	if i >= 0 && i < len(s.sub) {
-		if s.sub[i] != nil { return s.sub[i].entryAt(rest) }
-	}
-	return nil
-}
-func (s *spanK) entryAt(key string) itrie {
-	crit, _ := findcb(key, s.key_)
-	if crit >= len(key) { return nil }
-	_, cb, rest := splitKey(key, crit)
-	i := int(cb) - int(s.start)
-	if i >= 0 && i < len(s.sub) {
-		if s.sub[i] != nil { return s.sub[i].entryAt(rest) }
-	}
-	return nil
-}
-func (s *spanV) entryAt(key string) itrie {
-	if len(key) == 0 { return s }
-	_, cb, rest := splitKey(key, 0)
-	i := int(cb) - int(s.start)
-	if i >= 0 && i < len(s.sub) {
-		if s.sub[i] != nil { return s.sub[i].entryAt(rest) }
-	}
-	return nil
-}
-func (s *spanKV) entryAt(key string) itrie {
-	crit, match := findcb(key, s.key_)
-	if match { return s }
-	if crit >= len(key) { return nil }
-	_, cb, rest := splitKey(key, crit)
-	i := int(cb) - int(s.start)
-	if i >= 0 && i < len(s.sub) {
-		if s.sub[i] != nil { return s.sub[i].entryAt(rest) }
-	}
-	return nil
-}
 func (s *span_) foreach(prefix string, f func(string, Value)) {
 	for i, t := range s.sub {
 		if t != nil {

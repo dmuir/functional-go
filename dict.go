@@ -16,7 +16,7 @@ type IDict interface {
 	Assoc(key string, val Value) IDict
 	Without(key string) IDict
 	Contains(key string) bool
-	ValueAt(key string) Value
+	ValueAt(key string) (Value, bool)
 	Count() int
 	Foreach(func(string, Value))
 	Iter() chan Item
