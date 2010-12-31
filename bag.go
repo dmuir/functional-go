@@ -201,11 +201,20 @@ func (b *bagKV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 func (b *bag_) withoutValue() (itrie, int) {
 	return b, 0
 }
+func (b *bagK) withoutValue() (itrie, int) {
+	return b, 0
+}
+func (b *bag_) collapse(key string) (itrie, int) {
+	key += string(b.cb[0]) + b.sub[0].key()
+	return b.sub[0].cloneWithKey(key), 1
+}
 func (b *bagV) withoutValue() (itrie, int) {
+	if len(b.sub) == 1 { return b.collapse("") }
 	n := b.bag_
 	return &n, 1
 }
 func (b *bagKV) withoutValue() (itrie, int) {
+	if len(b.sub) == 1 { return b.collapse(b.key_) }
 	n := new(bagK)
 	n.key_ = b.key_; n.bag_ = b.bag_
 	return n, 1
@@ -292,81 +301,50 @@ func (b *bag_) maybeGrow(t itrie, cb byte, r itrie) (itrie, int, int) {
 	}
 	return nil, size, i
 }
-func (b *bag_) without(t itrie, key string) (itrie, int) {
-	return b.without_(t, key, 0)
+func (b *bag_) without_(t itrie, cb byte, r itrie) itrie {
+	if r == nil {
+		return b.shrink(t, cb)
+	}
+	i, _ := b.find(cb)
+	return t.modify(-1, i, r)
 }
-func (b *bagK) without(t itrie, key string) (itrie, int) {
-	crit, _ := findcb(key, b.key_)
-	if crit <= len(b.key_) {
-		// we don't have the element being removed
-		return t, 0
-	}
-	return b.bag_.without_(t, key, crit)
+func (b *bag_) without(cb byte, r itrie) itrie {
+	return b.without_(b, cb, r)
 }
-func (b *bagV) without(t itrie, key string) (itrie, int) {
-	if len(key) == 0 {
-		if len(b.sub) == 1 {
-			// collapse this node to it's only child.
-			key = string(b.cb[0]) + b.sub[0].key()
-			return b.sub[0].cloneWithKey(key), 1
-		}
-		return t.withoutValue()
-	}
-	return b.bag_.without_(t, key, 0)
+func (b *bagK) without(cb byte, r itrie) itrie {
+	return b.without_(b, cb, r)
 }
-func (b *bagKV) without(t itrie, key string) (itrie, int) {
-	crit, match := findcb(key, b.key_)
-	if crit < len(b.key_) {
-		// we don't have the element being removed
-		return t, 0
-	}
-	if match {
-		if len(b.sub) == 1 {
-			// collapse this node to it's only child.
-			key += string(b.cb[0]) + b.sub[0].key()
-			return b.sub[0].cloneWithKey(key), 1
-		}
-		return t.withoutValue()
-	}
-	return b.bag_.without_(t, key, crit)
+func (b *bagV) without(cb byte, r itrie) itrie {
+	return b.without_(b, cb, r)
 }
-func (b *bag_) without_(t itrie, key string, crit int) (itrie, int) {
-	_, cb, rest := splitKey(key, crit)
-	i, found := b.find(cb)
-	if !found {
-		// we don't have the element being removed
-		return b, 0
-	}
-	n, less := without(b.sub[i], rest)
-	if n == nil {
-		// We removed a leaf -- shrink our sub-tries & possibly turn into a leaf.
-		last := len(b.sub)-1
-		if last == 0 {
-			if !t.hasVal() {
-				panic("we should have a value if we have no sub-tries.")
-			}
-			return leaf(t.key(), t.val()), less
-		} else if last == 1 && !t.hasVal() {
-			o := 1 - i
-			key = t.key() + string(b.cb[o]) + b.sub[o].key()
-			return b.sub[o].cloneWithKey(key), less
+func (b *bagKV) without(cb byte, r itrie) itrie {
+	return b.without_(b, cb, r)
+}
+func (b *bag_) shrink(t itrie, cb byte) itrie {
+	i, _ := b.find(cb)
+
+	// We removed a leaf -- shrink our sub-tries & possibly turn into a leaf.
+	last := len(b.sub)-1
+	if last == 0 {
+		if !t.hasVal() {
+			panic("we should have a value if we have no sub-tries.")
 		}
-		e := b.expanse()
-		if last >= minSpanSize {
-			e = b.expanseWithout(cb)
-			if spanOK(e, last) {
-				// We can be a span
-				return spanWithout(t, e, cb), less
-			}
+		return leaf(t.key(), t.val())
+	} else if last == 1 && !t.hasVal() {
+		o := 1 - i
+		key := t.key() + string(b.cb[o]) + b.sub[o].key()
+		return b.sub[o].cloneWithKey(key)
+	}
+	e := b.expanse()
+	if last >= minSpanSize {
+		e = b.expanseWithout(cb)
+		if spanOK(e, last) {
+			// We can be a span
+			return spanWithout(t, e, cb)
 		}
-		// Still a bag.
-		return bagWithout(t, e, cb), less
 	}
-	if less == 0 {
-		if n != b.sub[i] { panic("Shouldn't create a new node without changes.") }
-		return t, 0
-	}
-	return t.modify(-1, i, n), less
+	// Still a bag.
+	return bagWithout(t, e, cb)
 }
 func (b *bagKV) foreach(prefix string, f func(key string, val Value)) {
 	prefix += b.key_

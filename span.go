@@ -152,12 +152,27 @@ func (s *spanKV) modify(incr, i int, sub itrie) itrie {
 func (s *span_) withoutValue() (itrie, int) {
 	return s, 0
 }
+func (s *spanK) withoutValue() (itrie, int) {
+	return s, 0
+}
+func (s *span_) collapse(key string) (itrie, int) {
+	for i, t := range s.sub {
+		if t != nil { 
+			key += string(byte(i)+s.start) + t.key()
+			return t.cloneWithKey(key), 1
+			break 
+		}
+	}
+	panic("Should always find one sub-trie to collapse to.")
+}
 func (s *spanV) withoutValue() (itrie, int) {
+	if s.occupied_ == 1 { return s.collapse("") }
 	n := new(span_)
 	*n = s.span_; n.count_--
 	return n, 1
 }
 func (s *spanKV) withoutValue() (itrie, int) {
+	if s.occupied_ == 1 { return s.collapse(s.key_) }
 	n := new(spanK)
 	n.span_ = s.span_; n.key_ = s.key_; n.count_--
 	return n, 1
@@ -260,108 +275,58 @@ func (s *span_) expanseWithout(cb byte) expanse_t {
 	}
 	return e
 }
-func (s *span_) without(t itrie, key string) (itrie, int) {
-	return s.without_(t, key, 0)
+func (s *span_) without_(t itrie, cb byte, r itrie) itrie {
+	if r == nil {
+		return s.shrink(t, cb)
+	}
+	i := int(cb) - int(s.start)
+	return s.modify(-1, i, r)
 }
-func (s *spanK) without(t itrie, key string) (itrie, int) {
-	crit, match := findcb(key, s.key_)
-	if crit < len(s.key_) {
-		// we don't have the element being removed
-		return t, 0
-	}
-
-	if match {
-		// we don't have the element being removed
-		return t, 0
-	}
-	return s.without_(t, key, crit)
+func (s *span_) without(cb byte, r itrie) itrie {
+	return s.without_(s, cb, r)
 }
-func (s *spanV) without(t itrie, key string) (itrie, int) {
-	if len(key) == 0 {
-		if s.occupied_ == 1 {
-			for i, c := range s.sub {
-				// collapse this node to it's only child.
-				if c == nil { continue }
-				key = string(s.start+byte(i)) + c.key()
-				return c.cloneWithKey(key), 1
-			}
-			panic("should have found a non-nil sub-trie.")
-		}
-		return t.withoutValue()
-	}
-	return s.without_(t, key, 0)
+func (s *spanK) without(cb byte, r itrie) itrie {
+	return s.without_(s, cb, r)
 }
-func (s *spanKV) without(t itrie, key string) (itrie, int) {
-	crit, match := findcb(key, s.key_)
-	if crit < len(s.key_) {
-		// we don't have the element being removed
-		return t, 0
-	}
-
-	if match {
-		if s.occupied_ == 1 {
-			for i, c := range s.sub {
-				// collapse this node to it's only child.
-				if c == nil { continue }
-				key += string(s.start+byte(i)) + c.key()
-				return c.cloneWithKey(key), 1
-			}
-			panic("should have found a non-nil sub-trie.")
-		}
-		return t.withoutValue()
-	}
-	return s.without_(t, key, crit)
+func (s *spanV) without(cb byte, r itrie) itrie {
+	return s.without_(s, cb, r)
 }
-func (s *span_) without_(t itrie, key string, crit int) (itrie, int) {
-	_, cb, rest := splitKey(key, crit)
-	if cb < s.start {
-		// we don't have the element being removed
-		return t, 0
-	}
-	i := cb - s.start
-	if int(i) >= len(s.sub) {
-		// we don't have the element being removed
-		return t, 0
-	}
-	n, less := without(s.sub[i], rest)
-	if n == nil {
-		// We removed a leaf -- shrink our children & possibly turn into a bag or leaf.
-		occupied := s.occupied_ - 1
-		// We shouldn't actually let spans get small enough to hit either of the next
-		// two cases
-		if occupied == 0 {
-			if !t.hasVal() { panic("we should have a value if we have no sub-tries.") }
-			return leaf(t.key(), t.val()), less
-		} 
-		if occupied == 1 && !t.hasVal() {
-			o := 0
-			for ; o < len(s.sub); o++ {
-				if byte(o) != i && s.sub[o] != nil { break }
-			}
-			if o >= len(s.sub) { panic("We should have another valid sub-trie") }
-			key = t.key() + string(cb) + s.sub[o].key()
-			return s.sub[o].cloneWithKey(key), less
+func (s *spanKV) without(cb byte, r itrie) itrie {
+	return s.without_(s, cb, r)
+}
+func (s *span_) shrink(t itrie, cb byte) itrie {
+	// We removed a leaf -- shrink our children & possibly turn into a bag or leaf.
+	occupied := s.occupied_ - 1
+	i := int(cb) - int(s.start)
+	// We shouldn't actually let spans get small enough to hit either of the next
+	// two cases
+	if occupied == 0 {
+		if !t.hasVal() { panic("we should have a value if we have no sub-tries.") }
+		return leaf(t.key(), t.val())
+	} 
+	if occupied == 1 && !t.hasVal() {
+		o := 0
+		for ; o < len(s.sub); o++ {
+			if o != i && s.sub[o] != nil { break }
 		}
-		e := s.expanse()
-		if occupied >= minSpanSize {
-			e = s.expanseWithout(cb)
-			if spanOK(e, int(occupied)) {
-				// We can stay a span
-				return spanWithout(t, e, cb), less
-			}
-		}
-		if occupied <= maxBagSize {
-			// We should become a bag
-			return bagWithout(t, e, cb), less
-		}
-		// Looks like we're a bitmap
-		return bitmapWithout(t, e, cb), less
+		if o >= len(s.sub) { panic("We should have another valid sub-trie") }
+		key := t.key() + string(cb) + s.sub[o].key()
+		return s.sub[o].cloneWithKey(key)
 	}
-	if less == 0 {
-		if n != s.sub[i] { panic("Shouldn't make a new node without changes.") }
-		return t, 0
+	e := s.expanse()
+	if occupied >= minSpanSize {
+		e = s.expanseWithout(cb)
+		if spanOK(e, int(occupied)) {
+			// We can stay a span
+			return spanWithout(t, e, cb)
+		}
 	}
-	return t.modify(-1, int(i), n), less
+	if occupied <= maxBagSize {
+		// We should become a bag
+		return bagWithout(t, e, cb)
+	}
+	// Looks like we're a bitmap
+	return bitmapWithout(t, e, cb)
 }
 func (s *span_) foreach(prefix string, f func(string, Value)) {
 	for i, t := range s.sub {

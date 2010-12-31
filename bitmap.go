@@ -239,6 +239,11 @@ func (b *bitmapKV) modify(incr, i int, sub itrie) itrie {
 func (b *bitmap_) withoutValue() (itrie, int) {
 	return b, 0
 }
+func (b *bitmapK) withoutValue() (itrie, int) {
+	return b, 0
+}
+// We assume that bitmaps always have > maxBagSize children, so we don't bother checking
+// if we can collapse them when removing a value.
 func (b *bitmapV) withoutValue() (itrie, int) {
 	n := b.bitmap_
 	return &n, 1
@@ -317,65 +322,40 @@ func (b *bitmap_) maybeGrow(t itrie, cb byte, r itrie) itrie {
 	// still a bitmap
 	return nil
 }
-func (b *bitmap_) without(t itrie, key string) (itrie, int) {
-	return b.without_(t, key, 0)
-}
-func (b *bitmapK) without(t itrie, key string) (itrie, int) {
-	crit, _ := findcb(key, b.key_)
-	if crit < len(b.key_) {
-		return t, 0
+func (b *bitmap_) without_(t itrie, cb byte, r itrie) itrie {
+	if r == nil {
+		return b.shrink(t, cb)
 	}
-	return b.bitmap_.without_(t, key, crit)
-}
-func (b *bitmapV) without(t itrie, key string) (itrie, int) {
-	if len(key) == 0 {
-		// we won't even check for the case of only 1 child in a bitmap -- it just
-		// shouldn't happen
-		return t.withoutValue()
-	}
-	return b.bitmap_.without_(t, key, 0)
-}
-func (b *bitmapKV) without(t itrie, key string) (itrie, int) {
-	crit, match := findcb(key, b.key_)
-	if crit < len(b.key_) {
-		return t, 0
-	}
-	if match {
-		// we won't even check for the case of only 1 child in a bitmap -- it just
-		// shouldn't happen
-		return t.withoutValue()
-	}
-	return b.bitmap_.without_(t, key, crit)
-}
-func (b *bitmap_) without_(t itrie, key string, crit int) (itrie, int) {
-	_, cb, rest := splitKey(key, crit)
 	w, bit := bitpos(uint(cb))
-	if !b.isset(w, bit) {
-		// we don't have the element being removed
-		return t, 0
-	}
 	i := b.indexOf(w, bit)
-	n, less := without(b.sub[i], rest)
-	if n == nil {
-		// We removed a leaf -- shrink our children & possibly turn into a bag or span.
-		occupied := b.occupied() - 1
-		e := b.expanseWithout(cb)
-		if spanOK(e, occupied) {
-			// We can be a span
-			return spanWithout(t, e, cb), less
-		}
-		if occupied <= maxBagSize {
-			// We should become a bag
-			return bagWithout(t, e, cb), less
-		}
-		// We should stay a bitmap
-		return bitmapWithout(t, e, cb), less
+	return b.modify(-1, i, r)
+}
+func (b *bitmap_) without(cb byte, r itrie) itrie {
+	return b.without_(b, cb, r)
+}
+func (b *bitmapK) without(cb byte, r itrie) itrie {
+	return b.without_(b, cb, r)
+}
+func (b *bitmapV) without(cb byte, r itrie) itrie {
+	return b.without_(b, cb, r)
+}
+func (b *bitmapKV) without(cb byte, r itrie) itrie {
+	return b.without_(b, cb, r)
+}
+func (b *bitmap_) shrink(t itrie, cb byte) itrie {
+	// We removed a leaf -- shrink our children & possibly turn into a bag or span.
+	occupied := b.occupied() - 1
+	e := b.expanseWithout(cb)
+	if spanOK(e, occupied) {
+		// We can be a span
+		return spanWithout(t, e, cb)
 	}
-	if less == 0 {
-		if n != b.sub[i] { panic("Shouldn't create a new node without changes.") }
-		return t, 0
+	if occupied <= maxBagSize {
+		// We should become a bag
+		return bagWithout(t, e, cb)
 	}
-	return b.modify(-1, i, n), less
+	// We should stay a bitmap
+	return bitmapWithout(t, e, cb)
 }
 func (b *bitmapKV) foreach(prefix string, f func(string, Value)) {
 	prefix += b.key_

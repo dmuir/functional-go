@@ -35,7 +35,7 @@ func (l *leafV) cloneWithKeyValue(key string, val Value) (itrie, int) {
 	return leaf(key, val), 0
 }
 func (l *leafV) withoutValue() (itrie, int) {
-	panic("Can't have a leaf without a value")
+	return nil, 1
 }
 func (l *leafV) subAt(cb byte) itrie { return nil }
 func (l *leafV) with(incr int, cb byte, r itrie) itrie {
@@ -44,21 +44,8 @@ func (l *leafV) with(incr int, cb byte, r itrie) itrie {
 func (l *leafKV) with(incr int, cb byte, r itrie) itrie {
 	return bag1(l.key_, l.val_, true, cb, r)
 }
-func (l *leafV) without(t itrie, key string) (itrie, int) {
-	if len(key) == 0 { return nil, 1 }
-	return t, 0
-}
-func (l *leafKV) without(t itrie, key string) (itrie, int) {
-	if key == l.key_ { return nil, 1 }
-	return t, 0
-}
-func (l *leafV) entryAt(key string) itrie {
-	if len(key) == 0 { return l }
-	return nil
-}
-func (l *leafKV) entryAt(key string) itrie {
-	if key == l.key_ { return l }
-	return nil
+func (l *leafV) without(cb byte, r itrie) itrie {
+	panic("leaves can't do 'without'.")
 }
 func (l *leafV) foreach(prefix string, f func(string, Value)) {
 	f(prefix, l.val_)

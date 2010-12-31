@@ -246,10 +246,49 @@ func assoc(t itrie, key string, val Value) (itrie, int) {
 }
 
 func without(t itrie, key string) (itrie, int) {
-	if t != nil {
-		return t.without(t, key)
+	var tries [maxDepth]itrie
+	var cbs [maxDepth]byte
+	path := 0
+	r := t
+	removed := 0
+
+	for t != nil {
+		key_ := t.key()
+		crit, match := findcb(key, key_)
+		if crit < len(key_) {
+			// we don't have the element being removed
+			return r, 0
+		}
+		if match {
+			if !t.hasVal() {
+				// don't have the element being removed
+				return r, 0
+			}
+			r, removed = t.withoutValue()
+			break
+		}
+		if crit >= len(key) {
+			// we don't have the element being removed
+			return r, 0
+		}
+
+		_, cb, rest := splitKey(key, crit)
+
+		tries[path] = t
+		cbs[path] = cb
+		t = t.subAt(cb)
+		key = rest
+		path++
 	}
-	return nil, 0
+	// At this point, we have the bottom most sub trie (possibly nil) in r, and tries/cbs
+	// has the information about the changes we need to build up the tree
+	for path > 0 {
+		path--
+		t := tries[path]
+		cb := cbs[path]
+		r = t.without(cb, r)
+	}
+	return r, removed
 }
 
 func entryAt(t itrie, key string) itrie {
@@ -278,7 +317,7 @@ type itrie interface {
 	modify(incr, i int, t itrie) itrie
 	cloneWithKey(string) itrie
 	cloneWithKeyValue(string, Value) (itrie, int)
-	without(t itrie, key string) (itrie, int)
+	without(cb byte, r itrie) itrie
 	withoutValue() (itrie, int)
 	count() int
 	occupied() int
