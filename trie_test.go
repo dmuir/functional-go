@@ -601,7 +601,8 @@ func TestRandomAssocStats(t *testing.T) {
 	runtime.GC()
 	snapshotGC()
 	d = d.Assoc(key, val)
-	f, err := os.Open("mem-pre-gc.pprof", os.O_WRONLY|os.O_CREAT, 0777)
+	f, err := os.Open("mem-pre-gc.pprof", os.O_WRONLY|os.O_CREAT|os.O_TRUNC, 0777)
+	defer f.Close()
 	if err == nil {
 		pprof.WriteCompleteHeapProfile(f)
 	} else {
