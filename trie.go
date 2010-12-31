@@ -193,13 +193,45 @@ func critbytes(first byte, rest ... byte) string {
 	return string(first) + string(rest)
 }
 
-// the max depth is the max number of critical bytes -- the minimum size for depth 32 is 2^32
-const maxDepth = 32
+const segSize = 32
+type trieStack struct {
+	t [segSize]itrie
+	cb [segSize]byte
+	pos int
+	next *trieStack
+}
+func (s *trieStack) reset() *trieStack {
+	s.next = nil
+	s.pos = 0
+	return s
+}
+func (s *trieStack) push(cb byte, t itrie) *trieStack {
+	if s.pos >= segSize {
+		fmt.Println("Growing stack")
+		s.pos--
+		next := new(trieStack)
+		next.next = s
+		s = next
+	}
+	s.t[s.pos] = t
+	s.cb[s.pos] = cb
+	s.pos++
+	return s
+}
+func (s *trieStack) pop() (itrie, byte, *trieStack, bool) {
+	s.pos--
+	if s.pos < 0 {
+		s = s.next
+	}
+	if s == nil { return nil, 0, nil, true }
+	return s.t[s.pos], s.cb[s.pos], s, false
+}
+
+// Use a global variable to avoid putting the first stack segment on the heap
+var stack trieStack
 
 func assoc(t itrie, key string, val Value) (itrie, int) {
-	var tries [maxDepth]itrie
-	var cbs [maxDepth]byte
-	path := 0
+	s := stack.reset()
 	var r itrie
 	var added int
 
@@ -228,27 +260,23 @@ func assoc(t itrie, key string, val Value) (itrie, int) {
 			}
 			break
 		}
-		tries[path] = t
-		cbs[path] = cb
+		s = s.push(cb, t)
 		t = t.subAt(cb)
 		key = rest
-		path++
 	}
 	// At this point, we have the bottom-most sub trie in r, and tries/cbs has the
 	// information about the changes we need to build up the tree
-	for path > 0 {
-		path--
-		t := tries[path]
-		cb := cbs[path]
+	for s != nil {		
+		t, cb, next, done := s.pop()
+		if done { break }
 		r = t.with(added, cb, r)
+		s = next
 	}
 	return r, added
 }
 
 func without(t itrie, key string) (itrie, int) {
-	var tries [maxDepth]itrie
-	var cbs [maxDepth]byte
-	path := 0
+	s := stack.reset()
 	r := t
 	removed := 0
 
@@ -274,19 +302,17 @@ func without(t itrie, key string) (itrie, int) {
 
 		_, cb, rest := splitKey(key, crit)
 
-		tries[path] = t
-		cbs[path] = cb
+		s = s.push(cb, t)
 		t = t.subAt(cb)
 		key = rest
-		path++
 	}
 	// At this point, we have the bottom most sub trie (possibly nil) in r, and tries/cbs
 	// has the information about the changes we need to build up the tree
-	for path > 0 {
-		path--
-		t := tries[path]
-		cb := cbs[path]
+	for s != nil {
+		t, cb, next, done := s.pop()
+		if done { break }
 		r = t.without(cb, r)
+		s = next
 	}
 	return r, removed
 }

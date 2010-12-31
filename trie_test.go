@@ -569,7 +569,7 @@ func TestPrintSizes(t *testing.T) {
 	fmt.Printf("sizeof(bitmapKV): %d\n", reflect.Typeof(bitmapKV{}).Size())
 }
 func TestRandomAssocStats(t *testing.T) {
-	const num = 1000000
+	const num = 100000
 	keys := make([]string, num)
 	values :=  make([]Value, num)
 	for i, _ := range keys {
