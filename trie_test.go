@@ -569,7 +569,7 @@ func TestPrintSizes(t *testing.T) {
 	fmt.Printf("sizeof(bitmapKV): %d\n", reflect.Typeof(bitmapKV{}).Size())
 }
 func TestRandomAssocStats(t *testing.T) {
-	const num = 100000
+	const num = 500000
 	keys := make([]string, num)
 	values :=  make([]Value, num)
 	for i, _ := range keys {
@@ -604,7 +604,7 @@ func TestRandomAssocStats(t *testing.T) {
 	f, err := os.Open("mem-pre-gc.pprof", os.O_WRONLY|os.O_CREAT|os.O_TRUNC, 0777)
 	defer f.Close()
 	if err == nil {
-		pprof.WriteCompleteHeapProfile(f)
+		pprof.WriteHeapProfile(f)
 	} else {
 		fmt.Println(err.String())
 	}
