@@ -1,5 +1,15 @@
 package immutable
 
+import "unsafe"
+import "runtime"
+
+// It seems that we need a concrete type with the same size as an iface to fake out 
+// the reflect/unsafe packages.
+type fakeiface struct {
+	a *int
+	b *int
+}
+
 /*
  bitmap_t
 
@@ -7,10 +17,11 @@ package immutable
 */
 type bitmap_ struct {
 	entry_
-	off [4]uint8
+	occupied_ uint16
 	count_ int
+	off [4]uint8
 	bm [4]uint64
-	sub []itrie
+	sub [256]itrie		// We don't actually allocate 256 entries
 }
 type bitmapK struct {
 	entryK
@@ -23,6 +34,26 @@ type bitmapV struct {
 type bitmapKV struct {
 	entryKV
 	bitmap_
+}
+
+var sizeofBitmap_ uintptr
+var sizeofBitmapK uintptr
+var sizeofBitmapV uintptr
+var sizeofBitmapKV uintptr
+var sizeofSub uintptr
+
+func init() {
+	var b_ bitmap_
+	var bk bitmapK
+	var bv bitmapV
+	var bkv bitmapKV
+	var t itrie
+
+	sizeofSub = uintptr(unsafe.Sizeof(t))
+	sizeofBitmap_ = uintptr(unsafe.Sizeof(b_)) - 256*sizeofSub
+	sizeofBitmapK = uintptr(unsafe.Sizeof(bk)) - 256*sizeofSub
+	sizeofBitmapV = uintptr(unsafe.Sizeof(bv)) - 256*sizeofSub
+	sizeofBitmapKV = uintptr(unsafe.Sizeof(bkv)) - 256*sizeofSub
 }
 
 /*
@@ -112,32 +143,55 @@ func (b *bitmap_) firstAfter(cb byte) byte {
 	}
 	return cb
 }
+func newBitmap_(size uint16) *bitmap_ {
+	asize := sizeofSub*uintptr(size)+sizeofBitmap_
+	b := (*bitmap_)(unsafe.Pointer(runtime.Alloc(asize)))
+	b.occupied_ = size
+	return b
+}
+func newBitmapK(size uint16) *bitmapK {
+	asize := sizeofSub*uintptr(size)+sizeofBitmapK
+	b := (*bitmapK)(unsafe.Pointer(runtime.Alloc(asize)))
+	b.occupied_ = size
+	return b
+}
+func newBitmapV(size uint16) *bitmapV {
+	asize := sizeofSub*uintptr(size)+sizeofBitmapV
+	b := (*bitmapV)(unsafe.Pointer(runtime.Alloc(asize)))
+	b.occupied_ = size
+	return b
+}
+func newBitmapKV(size uint16) *bitmapKV {
+	asize := sizeofSub*uintptr(size)+sizeofBitmapKV
+	b := (*bitmapKV)(unsafe.Pointer(runtime.Alloc(asize)))
+	b.occupied_ = size
+	return b
+}
 func makeBitmap(size int, key string, val Value, full bool) (b *bitmap_, t itrie) {
-	if len(key) > 0 {
-		if full {
-			Cumulative[kBitmapKV]++
-			n := new(bitmapKV)
-			n.key_ = str(key); n.val_ = val
-			b, t = &n.bitmap_, n
-		} else {
-			Cumulative[kBitmapK]++
-			n := new(bitmapK)
-			n.key_ = str(key)
-			b, t = &n.bitmap_, n
-		}
-	} else {
-		if full {
-			Cumulative[kBitmapV]++
-			n := new(bitmapV)
-			n.val_ = val
-			b, t = &n.bitmap_, n
-		} else {
-			Cumulative[kBitmap_]++
-			n := new(bitmap_)
-			b, t = n, n
-		}
+	occupied := uint16(size)
+	emptystr := len(key) == 0
+
+	switch {
+	case !emptystr && full:
+		Cumulative[kBitmapKV]++
+		n := newBitmapKV(occupied)
+		n.key_ = str(key); n.val_ = val
+		b, t = &n.bitmap_, n
+	case !emptystr && !full:
+		Cumulative[kBitmapK]++
+		n := newBitmapK(occupied)
+		n.key_ = str(key)
+		b, t = &n.bitmap_, n
+	case emptystr && full:
+		Cumulative[kBitmapV]++
+		n := newBitmapV(occupied)
+		n.val_ = val
+		b, t = &n.bitmap_, n
+	case emptystr && !full:
+		Cumulative[kBitmap_]++
+		n := newBitmap_(occupied)
+		b, t = n, n
 	}
-	b.sub = make([]itrie, int(size))
 	return
 }
 /*
@@ -174,65 +228,62 @@ func bitmapWithout(t itrie, e expanse_t, without byte) itrie {
 }
 
 func (b *bitmap_) copy(t *bitmap_) {
-	b.count_ = t.count_
-	b.off = t.off
-	b.bm = t.bm
-	b.sub = make([]itrie, len(t.sub))
-	copy(b.sub, t.sub)
+	b.occupied_ = t.occupied_; b.count_ = t.count_;	b.off = t.off; b.bm = t.bm
+	copy(b.sub[:b.occupied_], t.sub[:t.occupied_])
 }	
-func (b *bitmap_) cloneWithKey(key string) itrie {
-	n := new(bitmapK)
+func (b *bitmap_) cloneWithKey(key string) (t itrie) {
+	n := newBitmapK(b.occupied_)
 	Cumulative[kBitmapK]++
-	n.bitmap_ = *b; n.key_ = str(key)
+	n.copy(b); n.key_ = str(key)
 	return n
 }
-func (b *bitmapV) cloneWithKey(key string) itrie {
-	n := new(bitmapKV)
+func (b *bitmapV) cloneWithKey(key string) (t itrie) {
+	n := newBitmapKV(b.occupied_)
 	Cumulative[kBitmapKV]++
-	n.bitmap_ = b.bitmap_; n.key_ = str(key); n.val_ = b.val_
+	n.copy(&b.bitmap_); n.key_ = str(key); n.val_ = b.val_
 	return n
 }
-func (b *bitmapKV) cloneWithKey(key string) itrie {
-	n := new(bitmapKV)
+func (b *bitmapKV) cloneWithKey(key string) (t itrie) {
+	n := newBitmapKV(b.occupied_)
 	Cumulative[kBitmapKV]++
-	n.bitmap_ = b.bitmap_; n.key_ = str(key); n.val_ = b.val_
+	n.copy(&b.bitmap_); n.key_ = str(key); n.val_ = b.val_
 	return n
 }
-func (b *bitmap_) cloneWithKeyValue(key string, val Value) (itrie, int) {
-	n := new(bitmapKV)
+func (b *bitmap_) cloneWithKeyValue(key string, val Value) (t itrie, added int) {
+	n := newBitmapKV(b.occupied_)
 	Cumulative[kBitmapKV]++
-	n.bitmap_ = *b; n.key_ = str(key); n.val_ = val; n.count_++
+	n.copy(b); n.key_ = str(key); n.val_ = val; n.count_++
 	return n, 1
 }
-func (b *bitmapV) cloneWithKeyValue(key string, val Value) (itrie, int) {
-	n := new(bitmapKV)
+func (b *bitmapV) cloneWithKeyValue(key string, val Value) (t itrie, added int) {
+	n := newBitmapKV(b.occupied_)
 	Cumulative[kBitmapKV]++
-	n.bitmap_ = b.bitmap_; n.key_ = str(key); n.val_ = val
+	n.copy(&b.bitmap_); n.key_ = str(key); n.val_ = val
 	return n, 0
 }
-func (b *bitmapKV) cloneWithKeyValue(key string, val Value) (itrie, int) {
-	n := new(bitmapKV)
+func (b *bitmapKV) cloneWithKeyValue(key string, val Value) (t itrie, added int) {
+	n := newBitmapKV(b.occupied_)
 	Cumulative[kBitmapKV]++
-	n.bitmap_ = b.bitmap_; n.key_ = str(key); n.val_ = val
+	n.copy(&b.bitmap_); n.key_ = str(key); n.val_ = val
 	return n, 0
 }
-func (b *bitmap_) modify(incr, i int, sub itrie) itrie {
-	n := new(bitmap_)
+func (b *bitmap_) modify(incr, i int, sub itrie) (t itrie) {
+	n := newBitmap_(b.occupied_)
 	n.copy(b); n.count_ += incr; n.sub[i] = sub
 	return n
 }
-func (b *bitmapK) modify(incr, i int, sub itrie) itrie {
-	n := new(bitmapK)
+func (b *bitmapK) modify(incr, i int, sub itrie) (t itrie) {
+	n := newBitmapK(b.occupied_)
 	n.copy(&b.bitmap_); n.key_ = b.key_; n.count_ += incr; n.sub[i] = sub
 	return n
 }
-func (b *bitmapV) modify(incr, i int, sub itrie) itrie {
-	n := new(bitmapV)
+func (b *bitmapV) modify(incr, i int, sub itrie) (t itrie) {
+	n := newBitmapV(b.occupied_)
 	n.copy(&b.bitmap_); n.val_ = b.val_; n.count_ += incr; n.sub[i] = sub
 	return n
 }
-func (b *bitmapKV) modify(incr, i int, sub itrie) itrie {
-	n := new(bitmapKV)
+func (b *bitmapKV) modify(incr, i int, sub itrie) (t itrie) {
+	n := newBitmapKV(b.occupied_)
 	n.copy(&b.bitmap_); n.key_ = b.key_; n.val_ = b.val_; n.count_ += incr; n.sub[i] = sub
 	return n
 }
@@ -244,58 +295,56 @@ func (b *bitmapK) withoutValue() (itrie, int) {
 }
 // We assume that bitmaps always have > maxBagSize children, so we don't bother checking
 // if we can collapse them when removing a value.
-func (b *bitmapV) withoutValue() (itrie, int) {
-	n := b.bitmap_
-	return &n, 1
+func (b *bitmapV) withoutValue() (t itrie, removed int) {
+	n := newBitmap_(b.occupied_)
+	n.copy(&b.bitmap_)
+	return n, 1
 }
-func (b *bitmapKV) withoutValue() (itrie, int) {
-	n := new(bitmapK)
-	n.bitmap_ = b.bitmap_; n.key_ = b.key_
+func (b *bitmapKV) withoutValue() (t itrie, removed int) {
+	n := newBitmapK(b.occupied_)
+	n.copy(&b.bitmap_); n.key_ = b.key_
 	return n, 1
 }
 func (n *bitmap_) withBitmap(b *bitmap_, incr int, cb byte, r itrie) {
-	*n = *b; n.count_ = b.count_ + incr
+	n.off = b.off; n.bm = b.bm; n.count_ = b.count_ + incr
 	w, bit := bitpos(uint(cb))
-	size := len(b.sub)
 	exists := b.isset(w, bit)
-	if !exists { size++ }
 	i := b.indexOf(w, bit)
-	n.sub = make([]itrie, size)
 	copy(n.sub[:i], b.sub[:i])
 	src, dst := i, i
 	n.sub[dst] = r; dst++; if exists { src++ } else { n.setbit(w, bit) }
-	copy(n.sub[dst:], b.sub[src:])
+	copy(n.sub[dst:n.occupied_], b.sub[src:b.occupied_])
 }
 func (b *bitmap_) with(incr int, cb byte, r itrie) itrie {
-	t := b.maybeGrow(b, cb, r)
+	t, size := b.maybeGrow(b, cb, r)
 	if t != nil { return t }
-	n := new(bitmap_)
+	n := newBitmap_(size)
 	Cumulative[kBitmap_]++
 	n.withBitmap(b, incr, cb, r)
 	return n
 }
 func (b *bitmapK) with(incr int, cb byte, r itrie) itrie {
-	t := b.maybeGrow(b, cb, r)
+	t, size := b.maybeGrow(b, cb, r)
 	if t != nil { return t }
-	n := new(bitmapK)
+	n := newBitmapK(size)
 	Cumulative[kBitmap_]++
 	n.key_ = b.key_
 	n.withBitmap(&b.bitmap_, incr, cb, r)
 	return n
 }
 func (b *bitmapV) with(incr int, cb byte, r itrie) itrie {
-	t := b.maybeGrow(b, cb, r)
+	t, size := b.maybeGrow(b, cb, r)
 	if t != nil { return t }
-	n := new(bitmapV)
+	n := newBitmapV(size)
 	Cumulative[kBitmap_]++
 	n.val_ = b.val_
 	n.withBitmap(&b.bitmap_, incr, cb, r)
 	return n
 }
 func (b *bitmapKV) with(incr int, cb byte, r itrie) itrie {
-	t := b.maybeGrow(b, cb, r)
+	t, size := b.maybeGrow(b, cb, r)
 	if t != nil { return t }
-	n := new(bitmapKV)
+	n := newBitmapKV(size)
 	Cumulative[kBitmap_]++
 	n.key_ = b.key_; n.val_ = b.val_
 	n.withBitmap(&b.bitmap_, incr, cb, r)
@@ -306,21 +355,22 @@ func (b *bitmap_) subAt(cb byte) itrie {
 	if !b.isset(w, bit) { return nil }
 	return b.sub[b.indexOf(w, bit)]
 }
-func (b *bitmap_) maybeGrow(t itrie, cb byte, r itrie) itrie {
+func (b *bitmap_) maybeGrow(t itrie, cb byte, r itrie) (itrie, uint16) {
 	// Figure out if we stay a bitmap or if we can become a span
 	// we know we're too big to be a bag
 	w, bit := bitpos(uint(cb))
 	exists := b.isset(w, bit)
+	size := b.occupied_
 	if !exists {
+		size++
 		e := b.expanse().with(cb)
-		count := len(b.sub)
-		if spanOK(e, count+1) {
+		if spanOK(e, int(size)) {
 			// We can be a span
-			return span(t, e, cb, r)
+			return span(t, e, cb, r), size
 		}
 	}
 	// still a bitmap
-	return nil
+	return nil, size
 }
 func (b *bitmap_) without_(t itrie, cb byte, r itrie) itrie {
 	if r == nil {
@@ -344,7 +394,7 @@ func (b *bitmapKV) without(cb byte, r itrie) itrie {
 }
 func (b *bitmap_) shrink(t itrie, cb byte) itrie {
 	// We removed a leaf -- shrink our children & possibly turn into a bag or span.
-	occupied := b.occupied() - 1
+	occupied := int(b.occupied_) - 1
 	e := b.expanseWithout(cb)
 	if spanOK(e, occupied) {
 		// We can be a span
@@ -399,7 +449,7 @@ func (b *bitmap_) withsubs(start, end uint, f func(byte, itrie)) {
 	}
 }
 func (b *bitmap_) count() int { return b.count_ }
-func (b *bitmap_) occupied() int { return len(b.sub) }
+func (b *bitmap_) occupied() int { return int(b.occupied_) }
 func (b *bitmap_) expanse() expanse_t { return expanse(b.min(), b.max()) }
 func (b *bitmap_) expanseWithout(cb byte) expanse_t {
 	e := b.expanse()
