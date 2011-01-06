@@ -3,13 +3,6 @@ package immutable
 import "unsafe"
 import "runtime"
 
-// It seems that we need a concrete type with the same size as an iface to fake out 
-// the reflect/unsafe packages.
-type fakeiface struct {
-	a *int
-	b *int
-}
-
 /*
  bitmap_t
 
