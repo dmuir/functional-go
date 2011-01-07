@@ -54,6 +54,7 @@ func (l *leafKV) foreach(prefix string, f func(string, Value)) {
 	f(prefix + l.key_, l.val_)
 }
 func (l *leafV) withsubs(start uint, end uint, fn func(byte, itrie)) {}
+func (l *leafV) key() string { return "" }
 func (l *leafKV) key() string { return l.key_ }
 func (l *leafV) count() int { return 1 }
 func (l *leafV) occupied() int { return 0 }

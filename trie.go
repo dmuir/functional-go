@@ -27,8 +27,7 @@ const (
 type Stats [numVariants]int
 var Cumulative Stats
 
-func GetStats(i IDict) Stats {
-	d := i.(dict)
+func GetStats(d Dict) Stats {
 	var stats Stats
 	if d.t != nil {
 		var collect func(byte, itrie)
@@ -105,12 +104,8 @@ const maxSpanWaste = 4
 
 func str(s string) string {
 	// We do this to ensure that the string is a new copy and not a slice of a larger string
-	// We don't just return a byte slice since a byte slice is larger than a string.
-	// I really wish there was a better way to do this, since we're already creating a lot
-	// of work for the GC.
 	bytes := []byte(s)
 	return string(bytes)
-	//return s
 }
 
 func abs(x int) int {
@@ -134,24 +129,14 @@ type expanse_t struct {
 	size uint16
 }
 func expanse0() expanse_t { return expanse_t{0, 0, 0} }
-func expanse(first byte, rest ... byte) expanse_t {
-	low := first
-	high := first
-	for _, v := range rest {
-		if v < low { low = v }
-		if v > high { high = v }
-	}
+func expanse(low byte, high byte) expanse_t {
+	if low > high { low, high = high, low }
 	return expanse_t{low, high, uint16(high - low) + 1}
 }
 func (e expanse_t) with(cb byte) expanse_t {
 	if cb < e.low { return expanse_t{cb, e.high, uint16(e.high - cb) + 1} }
 	if cb > e.high { return expanse_t{e.low, cb, uint16(cb - e.low) + 1} }
 	return e
-}
-func (e expanse_t) contains(cb byte) bool {
-	if cb < e.low { return false }
-	if cb > e.high { return false }
-	return true
 }
 
 func spanOK(e expanse_t, count int) bool {
@@ -184,13 +169,6 @@ func splitKey(key string, crit int) (string, byte, string) {
 		return key, 0, ""
 	}
 	return key[0:crit], key[crit], key[crit+1:]
-}
-
-/*
- create a sequence (represented as a string) of critical bytes.
-*/
-func critbytes(first byte, rest ... byte) string {
-	return string(first) + string(rest)
 }
 
 const segSize = 32
@@ -351,62 +329,6 @@ type itrie interface {
 	expanseWithout(byte) expanse_t
 	foreach(string, func(string, Value))
 	withsubs(start uint, end uint, fn func (byte, itrie))
-}
-
-/*
- dict.
-
- This struct implements the IDict interface via an internal itrie.
-*/
-type dict struct {
-	t itrie
-}
-func (d dict) Assoc(key string, val Value) IDict {
-	t, _ := assoc(d.t, key, val)
-	return dict{t}
-}
-func (d dict) Without(key string) IDict {
-	t, _ := without(d.t, key)
-	return dict{t}
-}
-func (d dict) Contains(key string) bool { 
-	e := entryAt(d.t, key)
-	return e != nil
-}
-func (d dict) ValueAt(key string) (Value, bool) {
-	e := entryAt(d.t, key)
-	if e != nil { return e.val(), true }
-	return nil, false
-}
-func (d dict) Count() int {
-	if d.t != nil {
-		return d.t.count()
-	}
-	return 0
-}
-func (d dict) Foreach(fn func(string, Value)) {
-	if d.t != nil {
-		d.t.foreach("", fn)
-	}
-}
-func (d dict) Iter() chan Item {
-	ch := make(chan Item)
-	if d.t != nil {
-		emit := func(key string, val Value) { ch <- Item{key, val} }
-				
-		helper := func(t itrie, emit func(string, Value)) {
-			t.foreach("", emit)
-			close(ch) 
-		}
-		go helper(d.t, emit)
-	} else {
-		go close(ch)
-	}
-	return ch
-}
-
-func Dict() IDict {
-	return dict{nil}
 }
 
 /*

@@ -342,14 +342,14 @@ func TestBitmapWith(t *testing.T) {
 }
 
 func TestEmptyTrie(t *testing.T) {
-	m := Dict()
+	m := Dict{}
 	if m.Count() != 0 {
 		t.Errorf("TestEmptyMap: Count (%d) != 0", m.Count())
 	}
 }
 
 func TestAssocTrie(t *testing.T) {
-	m0 := Dict()
+	m0 := Dict{}
 
 	m1 := m0.Assoc("foo", "bar")
 	if m0.Count() != 0 {
@@ -382,7 +382,7 @@ func TestAssocTrie(t *testing.T) {
 	}
 }
 
-func printItems(m IDict) {
+func printItems(m Dict) {
 	typ := reflect.Typeof(m)
 	fmt.Printf("Dumping map(type=%s)...\n", typ.String())
 	for item := range m.Iter() {
@@ -391,7 +391,7 @@ func printItems(m IDict) {
 }
 
 func TestWithoutTrie(t *testing.T) {
-	m := Dict()
+	m := Dict{}
 	m = m.Assoc("A", 14)
 	m = m.Assoc("K", 13)
 	m = m.Assoc("Q", 12)
@@ -439,7 +439,7 @@ func TestWithoutTrie(t *testing.T) {
 
 func TestIterTrie(t *testing.T) {
 	var keys [256]string
-	m := Dict()
+	m := Dict{}
 
 	for i := 0; i < 256; i++ {
 		keys[i] = fmt.Sprintf("%02x", 255 - i)
@@ -528,7 +528,7 @@ func printGC() {
 }	
 	
 func TestRandomAssoc(t *testing.T) {
-	d := Dict()
+	d := Dict{}
 	m := map[string]int{}
 
 	for i := 0; i < 100000; i++ {
@@ -580,7 +580,7 @@ func TestRandomAssocStats(t *testing.T) {
 	runtime.GC()
 	snapshotGC()
 
-	d := Dict()
+	d := Dict{}
 
 	for i, key := range keys {
 		d = d.Assoc(key, values[i])
@@ -625,7 +625,7 @@ func BenchmarkAssoc(b *testing.B) {
 	}
 	runtime.GC()
 	b.StartTimer()
-	d := Dict()
+	d := Dict{}
 	for i, key := range keys {
 		d = d.Assoc(key, values[i])
 	}

@@ -202,7 +202,7 @@ func (s *spanK) withoutValue() (itrie, int) {
 }
 func (s *span_) collapse(key string) (itrie, int) {
 	for i, t := range s.sub {
-		if t != nil { 
+		if t != nil {
 			key += string(byte(i)+s.start) + t.key()
 			return t.cloneWithKey(key), 1
 			break 
